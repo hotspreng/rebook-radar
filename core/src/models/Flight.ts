@@ -1,0 +1,64 @@
+import {
+  BookingCost,
+  FareType,
+  FlightSource,
+  IsoDate,
+  IsoDateTime,
+} from './common.js';
+
+/** A single airport in a route. */
+export interface Airport {
+  /** IATA code, e.g. "MDW". */
+  code: string;
+  /** Human readable name, optional. */
+  name?: string;
+}
+
+/** Origin/destination pair. */
+export interface Route {
+  origin: Airport;
+  destination: Airport;
+}
+
+/**
+ * A tracked Southwest flight (one direction of travel).
+ *
+ * A round trip is represented as two `Flight` records sharing a confirmation
+ * number, which mirrors how Southwest prices and refunds each leg separately.
+ */
+export interface Flight {
+  id: string;
+
+  /** Passenger this flight belongs to. */
+  passengerId: string;
+  /** Account the flight was booked under, when known. */
+  accountId?: string;
+
+  confirmationNumber: string;
+  route: Route;
+  /** Departure date/time in the origin's local time zone (ISO-8601). */
+  departureDateTime: IsoDateTime;
+  /** Arrival date/time, when known. */
+  arrivalDateTime?: IsoDateTime;
+
+  fareType: FareType;
+
+  /** What was originally paid for this flight. */
+  originalCost: BookingCost;
+  /** Date the booking was made. */
+  bookingDate: IsoDate;
+
+  /** Where this record came from (manual entry vs scraping). */
+  source: FlightSource;
+
+  /** Optional free-text note. */
+  notes?: string;
+
+  /** Whether the flight is actively monitored for price drops. */
+  monitoring: boolean;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NewFlight = Omit<Flight, 'id' | 'createdAt' | 'updatedAt'>;

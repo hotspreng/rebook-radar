@@ -1,0 +1,472 @@
+import { useEffect, useState } from 'react';
+import type { AppSettings, EmailImportResult, EmailStatus } from '@shared/dto';
+import { Activity, Mail, Plug, RefreshCw, Save } from 'lucide-react';
+import { useAppStore } from '../store/useAppStore.js';
+import { Button, Card, Field, inputClass } from './ui.js';
+import { formatDateTime } from '../lib/format.js';
+
+const api = window.swr;
+
+export function SettingsPage(): JSX.Element {
+  const { settings, monitor, updateSettings, pushToast } = useAppStore();
+  const [draft, setDraft] = useState<AppSettings | null>(settings);
+  const [saving, setSaving] = useState(false);
+  const [warming, setWarming] = useState(false);
+
+  if (!draft) return <div className="p-8 text-slate-400">Loading…</div>;
+
+  function set<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
+    setDraft((d) => (d ? { ...d, [key]: value } : d));
+  }
+
+  /** Update the draft AND persist immediately (for toggles/selects that should
+   * take effect without clicking "Save settings"). */
+  function setPersist<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
+    setDraft((d) => (d ? { ...d, [key]: value } : d));
+    void updateSettings({ [key]: value } as Partial<AppSettings>);
+  }
+
+  async function handleSave(): Promise<void> {
+    if (!draft) return;
+    setSaving(true);
+    await updateSettings(draft);
+    setSaving(false);
+    pushToast('success', 'Settings saved.');
+  }
+
+  async function handleWarmProfile(): Promise<void> {
+    setWarming(true);
+    pushToast('info', 'Opening Southwest… do one manual search, then close the window.');
+    try {
+      await api.settings.warmScraperProfile();
+      pushToast('success', 'Scraper profile warmed. Automated price checks should work now.');
+    } catch (err) {
+      pushToast('error', `Could not warm profile: ${String(err)}`);
+    } finally {
+      setWarming(false);
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <header className="flex items-center justify-between border-b border-slate-800 px-7 py-5">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-100">Settings</h1>
+          <p className="text-sm text-slate-400">Valuation, alerts, monitoring, and data source.</p>
+        </div>
+        <Button onClick={handleSave} disabled={saving}>
+          <Save size={16} /> {saving ? 'Saving…' : 'Save settings'}
+        </Button>
+      </header>
+
+      <div className="flex-1 space-y-5 overflow-y-auto px-7 py-6">
+        <Card className="px-6 py-5">
+          <h2 className="mb-4 text-sm font-semibold text-slate-200">Points valuation</h2>
+          <div className="grid grid-cols-3 gap-4">
+            <Field label="Cents per point" hint="Typical range 1.3–1.5¢.">
+              <input
+                type="number"
+                step="0.05"
+                min="1"
+                max="2"
+                className={inputClass}
+                value={draft.pointValueCents}
+                onChange={(e) => set('pointValueCents', Number(e.target.value))}
+              />
+            </Field>
+          </div>
+        </Card>
+
+        <Card className="px-6 py-5">
+          <h2 className="mb-4 text-sm font-semibold text-slate-200">Alerts</h2>
+          <div className="grid grid-cols-3 gap-4">
+            <Field label="Cash alert threshold (USD)">
+              <input
+                type="number"
+                className={inputClass}
+                value={draft.savingsAlertThresholdUsd}
+                onChange={(e) => set('savingsAlertThresholdUsd', Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Points alert threshold">
+              <input
+                type="number"
+                className={inputClass}
+                value={draft.savingsAlertThresholdPoints}
+                onChange={(e) => set('savingsAlertThresholdPoints', Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Poll interval (minutes)">
+              <input
+                type="number"
+                min="5"
+                className={inputClass}
+                value={draft.pollIntervalMinutes}
+                onChange={(e) => set('pollIntervalMinutes', Number(e.target.value))}
+              />
+            </Field>
+          </div>
+        </Card>
+
+        <Card className="px-6 py-5">
+          <h2 className="mb-4 text-sm font-semibold text-slate-200">Monitoring</h2>
+          <Toggle
+            label="Enable background price monitoring"
+            description="Polls current prices on the interval above and sends Windows notifications when savings clear your threshold."
+            checked={draft.monitoringEnabled}
+            onChange={(v) => setPersist('monitoringEnabled', v)}
+          />
+          {monitor && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+              <Activity size={14} className={monitor.running ? 'text-emerald-400' : 'text-slate-600'} />
+              {monitor.running ? 'Running' : 'Stopped'}
+              {monitor.lastRunAt && ` · last run ${formatDateTime(monitor.lastRunAt)}`}
+              {monitor.nextRunAt && monitor.running && ` · next ${formatDateTime(monitor.nextRunAt)}`}
+              {monitor.lastError && <span className="text-red-400"> · {monitor.lastError}</span>}
+            </div>
+          )}
+        </Card>
+
+        <Card className="px-6 py-5">
+          <h2 className="mb-4 text-sm font-semibold text-slate-200">Data source</h2>
+          <GmailImportCard />
+        </Card>
+
+        <Card className="px-6 py-5">
+          <h2 className="mb-1 text-sm font-semibold text-slate-200">Live price source</h2>
+          <p className="mb-4 text-xs text-slate-500">
+            How current fares are fetched. <strong>SerpApi (Google Flights)</strong> reads Southwest
+            cash fares via an API and estimates the points cost — reliable, no bot checks.
+            <strong> Scraper</strong> drives a browser against southwest.com to read real points
+            (often blocked by Southwest&apos;s bot protection).
+          </p>
+          <label className="flex items-center justify-between gap-4">
+            <span className="text-sm text-slate-200">
+              Source
+              <span className="mt-0.5 block text-xs text-slate-500">
+                Southwest award (points) pricing isn&apos;t published to third parties, so SerpApi
+                returns an estimated points value from the cash fare.
+              </span>
+            </span>
+            <select
+              className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200"
+              value={draft.fareSource}
+              onChange={(e) => setPersist('fareSource', e.target.value as 'scraper' | 'serpapi')}
+            >
+              <option value="serpapi">SerpApi (Google Flights)</option>
+              <option value="scraper">Scraper (southwest.com)</option>
+            </select>
+          </label>
+          {draft.fareSource === 'serpapi' && (
+            <div className="mt-4">
+              <SerpApiKeyEditor
+                configured={draft.serpApiConfigured}
+                onSaved={(next) => setDraft(next)}
+              />
+            </div>
+          )}
+        </Card>
+
+        <Card className="px-6 py-5">
+          <h2 className="mb-1 text-sm font-semibold text-slate-200">Live price scraping (southwest.com)</h2>
+          <p className="mb-4 text-xs text-slate-500">
+            Reads real-time fares/points by driving a browser. These options save immediately. Use
+            headful + Installed Chrome for best results against Southwest&apos;s bot checks.
+          </p>
+          <Toggle
+            label="Enable Southwest scraping (Playwright)"
+            description="Drives a real browser to read live southwest.com prices. May trip anti-bot checks."
+            checked={draft.scrapingEnabled}
+            onChange={(v) => setPersist('scrapingEnabled', v)}
+          />
+          <div className="mt-3">
+            <Toggle
+              label="Show browser while scraping (headful)"
+              description="Useful to solve CAPTCHA or debug login. Slower."
+              checked={draft.scraperHeadful}
+              onChange={(v) => setPersist('scraperHeadful', v)}
+            />
+          </div>
+          <div className="mt-3">
+            <label className="flex items-center justify-between gap-4">
+              <span className="text-sm text-slate-200">
+                Browser
+                <span className="mt-0.5 block text-xs text-slate-500">
+                  Use your installed Chrome/Edge (no download, fewer bot checks) or Playwright&apos;s
+                  bundled Chromium.
+                </span>
+              </span>
+              <select
+                className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200"
+                value={draft.scraperBrowserChannel}
+                onChange={(e) =>
+                  setPersist(
+                    'scraperBrowserChannel',
+                    e.target.value as 'chrome' | 'msedge' | 'chromium',
+                  )
+                }
+              >
+                <option value="chrome">Installed Chrome</option>
+                <option value="msedge">Installed Edge</option>
+                <option value="chromium">Bundled Chromium</option>
+              </select>
+            </label>
+          </div>
+          <div className="mt-3">
+            <Toggle
+              label="Debug logging"
+              description="Verbose logs and raw email/page dumps for tuning (credentials always redacted)."
+              checked={draft.debugMode}
+              onChange={(v) => setPersist('debugMode', v)}
+            />
+          </div>
+          <div className="mt-4 rounded border border-slate-700 bg-slate-800/40 px-3 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-slate-200">Warm up scraper profile</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Run this once before automated checks. It opens Southwest in a dedicated browser
+                  profile — do one manual flight search, then close the window. This stores the
+                  trust cookies that let automated price checks through.
+                </p>
+              </div>
+              <Button onClick={handleWarmProfile} disabled={warming || !draft.scrapingEnabled}>
+                <RefreshCw size={16} className={warming ? 'animate-spin' : undefined} />
+                {warming ? 'Warming…' : 'Warm up'}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function Toggle({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}): JSX.Element {
+  return (
+    <label className="flex cursor-pointer items-start justify-between gap-4">
+      <div>
+        <p className="text-sm font-medium text-slate-200">{label}</p>
+        {description && <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{description}</p>}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        className={`mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors ${checked ? 'bg-brand-600' : 'bg-slate-700'}`}
+      >
+        <span
+          className={`block h-5 w-5 translate-y-0.5 rounded-full bg-white transition-transform ${
+            checked ? 'translate-x-[22px]' : 'translate-x-0.5'
+          }`}
+        />
+      </button>
+    </label>
+  );
+}
+
+function SerpApiKeyEditor({
+  configured,
+  onSaved,
+}: {
+  configured: boolean;
+  onSaved: (next: AppSettings) => void;
+}): JSX.Element {
+  const { pushToast } = useAppStore();
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function handleSave(remove = false): Promise<void> {
+    if (!remove && !key.trim()) {
+      pushToast('error', 'Paste your SerpApi key first.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await api.settings.setSerpApiKey(remove ? '' : key);
+      useAppStore.setState({ settings: next });
+      onSaved(next);
+      setKey('');
+      pushToast('success', remove ? 'SerpApi key removed.' : 'SerpApi key saved.');
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <p className="text-xs leading-relaxed text-slate-400">
+        Get a free key at{' '}
+        <button
+          type="button"
+          className="text-brand-400 underline"
+          onClick={() => void api.openExternal('https://serpapi.com/manage-api-key')}
+        >
+          serpapi.com
+        </button>{' '}
+        (100 searches/month free). Stored encrypted with Windows DPAPI; never leaves this computer
+        except in requests to SerpApi.
+      </p>
+      <Field
+        label="SerpApi key"
+        hint={configured ? 'A key is saved. Paste a new one to replace it.' : 'Encrypted at rest.'}
+      >
+        <input
+          type="password"
+          className={inputClass}
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          autoComplete="off"
+          placeholder={configured ? '•••••••• (saved)' : 'Paste key…'}
+        />
+      </Field>
+      <div className="flex items-center gap-3">
+        <Button onClick={() => void handleSave(false)} disabled={busy}>
+          <Save size={15} /> {busy ? 'Saving…' : 'Save key'}
+        </Button>
+        {configured && (
+          <Button variant="ghost" onClick={() => void handleSave(true)} disabled={busy}>
+            Remove
+          </Button>
+        )}
+        <span className={`text-xs ${configured ? 'text-emerald-400' : 'text-amber-400'}`}>
+          {configured ? 'Key saved' : 'No key yet'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function GmailImportCard(): JSX.Element {
+  const { pushToast } = useAppStore();
+  const [status, setStatus] = useState<EmailStatus | null>(null);
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [busy, setBusy] = useState<null | 'save' | 'connect' | 'import'>(null);
+
+  useEffect(() => {
+    void api.email.status().then(setStatus);
+  }, []);
+
+  async function handleSaveCreds(): Promise<void> {
+    if (!clientId.trim() || !clientSecret.trim()) {
+      pushToast('error', 'Enter both Client ID and Client Secret.');
+      return;
+    }
+    setBusy('save');
+    try {
+      setStatus(await api.email.setCredentials({ clientId, clientSecret }));
+      setClientSecret('');
+      pushToast('success', 'Google credentials saved.');
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleConnect(): Promise<void> {
+    setBusy('connect');
+    try {
+      if (status?.connected) {
+        setStatus(await api.email.disconnect());
+        pushToast('info', 'Gmail disconnected.');
+      } else {
+        pushToast('info', 'A browser window opened — approve access to continue.');
+        setStatus(await api.email.connect());
+        pushToast('success', 'Gmail connected.');
+      }
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleImport(): Promise<void> {
+    setBusy('import');
+    try {
+      const r: EmailImportResult = await api.email.import();
+      await useAppStore.getState().refreshFlights();
+      setStatus(await api.email.status());
+      pushToast(
+        'success',
+        `Scanned ${r.scanned} email(s): ${r.imported} added, ${r.updated} updated, ${r.cancelled} cancelled, ${r.skipped} skipped.`,
+      );
+    } catch (err) {
+      pushToast('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-800">
+          <Mail size={18} className="text-brand-400" />
+        </div>
+        <div className="text-sm">
+          <p className="font-medium text-slate-100">Import trips from Gmail (recommended)</p>
+          <p className="mt-0.5 leading-relaxed text-slate-500">
+            Reads your Southwest confirmation emails (read-only) to import trips and the price you paid,
+            and automatically drops trips you’ve cancelled. Nothing leaves this computer except the
+            request to Google; your tokens are encrypted with Windows DPAPI.
+          </p>
+        </div>
+      </div>
+
+      {!status?.configured && (
+        <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+          <p className="text-xs leading-relaxed text-slate-400">
+            One-time setup: create a Google Cloud project, enable the <strong>Gmail API</strong>, and make
+            an OAuth client of type <strong>Desktop app</strong>. Paste its Client ID and Client Secret
+            below.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="OAuth Client ID">
+              <input className={inputClass} value={clientId} onChange={(e) => setClientId(e.target.value)} autoComplete="off" placeholder="…apps.googleusercontent.com" />
+            </Field>
+            <Field label="OAuth Client Secret" hint="Encrypted at rest.">
+              <input type="password" className={inputClass} value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} autoComplete="new-password" />
+            </Field>
+          </div>
+          <Button onClick={handleSaveCreds} disabled={busy === 'save'}>
+            <Save size={15} /> {busy === 'save' ? 'Saving…' : 'Save credentials'}
+          </Button>
+        </div>
+      )}
+
+      {status?.configured && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant={status.connected ? 'ghost' : 'primary'} onClick={handleConnect} disabled={busy === 'connect'}>
+            <Plug size={15} /> {status.connected ? 'Disconnect' : busy === 'connect' ? 'Connecting…' : 'Connect Gmail'}
+          </Button>
+          <Button variant="secondary" onClick={handleImport} disabled={!status.connected || busy === 'import'}>
+            <RefreshCw size={15} className={busy === 'import' ? 'animate-spin' : ''} /> Import trips now
+          </Button>
+          <div className="text-xs text-slate-500">
+            {status.connected ? (
+              <span className="text-emerald-400">Connected{status.email ? ` · ${status.email}` : ''}</span>
+            ) : (
+              <span className="text-amber-400">Credentials saved — not connected yet</span>
+            )}
+            {status.lastImportAt && ` · last import ${formatDateTime(status.lastImportAt)}`}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+

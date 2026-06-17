@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Builds
+dist/
+out/
+build/
+*.tsbuildinfo
+
+# Electron
+release/
+desktop/out/
+desktop/dist/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Local app data (never commit a real DB)
+*.sqlite
+*.sqlite3
+*.db
+
+# Playwright
+playwright-report/
+test-results/
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/

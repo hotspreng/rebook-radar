@@ -1,0 +1,32 @@
+{
+  "name": "southwest-rebooker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Compare originally-paid vs current Southwest Airlines fares (cash or Rapid Rewards points) to decide whether to cancel and rebook.",
+  "author": "",
+  "license": "MIT",
+  "workspaces": [
+    "core",
+    "desktop",
+    "web"
+  ],
+  "scripts": {
+    "build:core": "npm run build --workspace @swr/core",
+    "dev": "npm run dev --workspace @swr/desktop",
+    "build": "npm run build:core && npm run build --workspace @swr/desktop",
+    "build:win": "npm run build:core && npm run build:win --workspace @swr/desktop",
+    "lint": "eslint .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspace @swr/core",
+    "postinstall": "npm run build:core"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.14.0",
+    "eslint": "^9.14.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.13.0"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "@swr/desktop",
+  "version": "0.1.0",
+  "description": "Electron desktop shell for Southwest Rebooker.",
+  "license": "MIT",
+  "main": "./out/main/index.js",
+  "author": "Southwest Rebooker",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "build:win": "electron-vite build && electron-builder --win --publish never",
+    "build:unpacked": "electron-vite build && electron-builder --dir"
+  },
+  "dependencies": {
+    "@swr/core": "*",
+    "dotenv": "^16.4.5",
+    "google-auth-library": "^9.15.0",
+    "lucide-react": "^0.468.0",
+    "playwright": "^1.48.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sql.js": "^1.11.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@types/node": "^20.16.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/sql.js": "^1.4.9",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "electron": "^33.4.11",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^5.0.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.48.0"
+  }
+}
