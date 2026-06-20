@@ -78,6 +78,53 @@ test('surfaces SerpApi error payloads', async () => {
   await assert.rejects(sut.searchPrice(QUERY), /Invalid API key/);
 });
 
+test('treats Google Flights "no results" as a friendly no-results error', async () => {
+  const sut = provider(async () => ({
+    error: "Google Flights hasn't returned any results for this query.",
+  }));
+  await assert.rejects(sut.searchPrice(QUERY), (err: unknown) => {
+    assert.ok(err instanceof Error);
+    assert.equal((err as { code?: string }).code, 'NO_RESULTS');
+    assert.match(err.message, /no Southwest fares for ROC→MDW/);
+    return true;
+  });
+});
+
+test('falls back to deep_search when the fast query returns no results', async () => {
+  const urls: string[] = [];
+  const sut = provider(async (url) => {
+    urls.push(url);
+    if (!url.includes('deep_search=true')) {
+      return { error: "Google Flights hasn't returned any results for this query." };
+    }
+    return {
+      best_flights: [
+        {
+          price: 206,
+          flights: [
+            {
+              airline: 'Southwest',
+              departure_airport: { id: 'MDW', time: '2026-10-09 07:45' },
+              arrival_airport: { id: 'ROC', time: '2026-10-09 10:20' },
+            },
+          ],
+        },
+      ],
+    };
+  });
+
+  const results = await sut.searchPrice({
+    origin: 'MDW',
+    destination: 'ROC',
+    departureDate: '2026-10-09',
+  });
+  assert.equal(results.length, 1);
+  assert.equal(results[0]!.cashUsd, 206);
+  assert.equal(urls.length, 2);
+  assert.ok(!urls[0]!.includes('deep_search'));
+  assert.ok(urls[1]!.includes('deep_search=true'));
+});
+
 test('rotates to the next key when one runs out of searches', async () => {
   const usedKeys: string[] = [];
   const sut = new GoogleFlightsSerpApiProvider({

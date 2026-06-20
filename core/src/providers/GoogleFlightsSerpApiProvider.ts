@@ -119,39 +119,51 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
     for (let i = 0; i < keys.length; i++) {
       const apiKey = keys[i]!;
       const isLast = i === keys.length - 1;
-      const url = this.buildUrl(query, apiKey);
-      this.log.info('Querying SerpApi google_flights', {
-        origin: query.origin,
-        destination: query.destination,
-        date: query.departureDate,
-        keySlot: i + 1,
-        keyCount: keys.length,
-      });
 
-      let raw: unknown;
-      try {
-        raw = await this.fetchJson(url);
-      } catch (err) {
-        if (this.isQuotaError(String(err)) && !isLast) {
-          this.log.warn('SerpApi key out of searches — rotating to next key', { keySlot: i + 1 });
-          lastQuotaError = err;
-          continue;
-        }
-        throw new AirlineError('NETWORK', `SerpApi request failed: ${String(err)}`, {
-          providerId: this.id,
-          cause: err,
+      const first = await this.querySerpApi(query, apiKey, false, i + 1, keys.length);
+      if (first.quota) {
+        this.log.warn('SerpApi key out of searches — rotating to next key', { keySlot: i + 1 });
+        lastQuotaError = first.error;
+        if (!isLast) continue;
+        break;
+      }
+      let body = first.body;
+
+      // Google Flights' fast/cached path sometimes returns nothing for a valid
+      // route+date that genuinely has flights. A deep search reproduces the
+      // browser's results and usually fills the gap, so retry once when empty.
+      if (this.isEmptyResponse(body)) {
+        this.log.info('Fast SerpApi search returned nothing — retrying with deep_search', {
+          origin: query.origin,
+          destination: query.destination,
+          date: query.departureDate,
         });
+        const deep = await this.querySerpApi(query, apiKey, true, i + 1, keys.length);
+        if (deep.quota) {
+          lastQuotaError = deep.error;
+          if (!isLast) continue;
+          // No more keys — fall through so the empty body throws a no-results error.
+        } else {
+          body = deep.body;
+        }
       }
 
-      const body = (raw ?? {}) as SerpResponse;
       if (body.error) {
-        if (this.isQuotaError(body.error) && !isLast) {
-          this.log.warn('SerpApi key out of searches — rotating to next key', {
-            keySlot: i + 1,
-            error: body.error,
+        // Google Flights returned no data even with deep search. This is a "no
+        // fares right now" condition, not a failure — surface a clear message
+        // instead of the raw SerpApi error text.
+        if (this.isNoResultsError(body.error)) {
+          this.log.info('Google Flights returned no results', {
+            origin: query.origin,
+            destination: query.destination,
+            date: query.departureDate,
           });
-          lastQuotaError = new Error(body.error);
-          continue;
+          throw new NoResultsError(
+            `Google Flights has no ${this.airlineName} fares for ` +
+              `${query.origin}→${query.destination} on ${query.departureDate} right now. ` +
+              `Try again later, or check southwest.com directly.`,
+            this.id,
+          );
         }
         throw new AirlineError('NETWORK', `SerpApi error: ${body.error}`, { providerId: this.id });
       }
@@ -167,6 +179,54 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
     );
   }
 
+  /**
+   * Perform a single SerpApi search. Returns the parsed body, or a `quota`
+   * signal when that key has exhausted its monthly searches (so the caller can
+   * rotate to the next key). Throws an {@link AirlineError} on network failure.
+   */
+  private async querySerpApi(
+    query: FlightSearchQuery,
+    apiKey: string,
+    deepSearch: boolean,
+    keySlot: number,
+    keyCount: number,
+  ): Promise<{ quota: true; error: unknown } | { quota: false; body: SerpResponse }> {
+    const url = this.buildUrl(query, apiKey, deepSearch);
+    this.log.info('Querying SerpApi google_flights', {
+      origin: query.origin,
+      destination: query.destination,
+      date: query.departureDate,
+      keySlot,
+      keyCount,
+      deepSearch,
+    });
+
+    let raw: unknown;
+    try {
+      raw = await this.fetchJson(url);
+    } catch (err) {
+      if (this.isQuotaError(String(err))) return { quota: true, error: err };
+      throw new AirlineError('NETWORK', `SerpApi request failed: ${String(err)}`, {
+        providerId: this.id,
+        cause: err,
+      });
+    }
+
+    const body = (raw ?? {}) as SerpResponse;
+    if (body.error && this.isQuotaError(body.error)) {
+      return { quota: true, error: new Error(body.error) };
+    }
+    return { quota: false, body };
+  }
+
+  /** True when SerpApi returned no usable itineraries (an explicit no-results
+   *  error, or zero flights in both result buckets). */
+  private isEmptyResponse(body: SerpResponse): boolean {
+    if (body.error) return this.isNoResultsError(body.error);
+    const total = (body.best_flights?.length ?? 0) + (body.other_flights?.length ?? 0);
+    return total === 0;
+  }
+
   /** Resolve the ordered list of usable API keys (multi-key takes precedence). */
   private async resolveKeys(): Promise<string[]> {
     if (this.getApiKeys) {
@@ -180,6 +240,13 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
   /** True when a SerpApi error/message indicates the monthly search quota is exhausted. */
   private isQuotaError(message: string): boolean {
     return /run out of searches|ran out of searches|exceeded|out of searches|plan searches|monthly search|account.*limit|HTTP 429|429/i.test(
+      message,
+    );
+  }
+
+  /** True when SerpApi reports Google Flights returned no itineraries for the query. */
+  private isNoResultsError(message: string): boolean {
+    return /returned? any results|hasn't returned|has not returned|no results|didn't return any|did not return any/i.test(
       message,
     );
   }
@@ -224,7 +291,7 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
 
   // --- helpers -------------------------------------------------------------
 
-  private buildUrl(query: FlightSearchQuery, apiKey: string): string {
+  private buildUrl(query: FlightSearchQuery, apiKey: string, deepSearch = false): string {
     const params = new URLSearchParams({
       engine: 'google_flights',
       departure_id: query.origin,
@@ -236,6 +303,9 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
       adults: String(query.passengers ?? 1),
       api_key: apiKey,
     });
+    // Deep search matches the Google Flights browser UI exactly (slower), used
+    // as a fallback when the default fast path returns no results.
+    if (deepSearch) params.set('deep_search', 'true');
     return `${this.baseUrl}?${params.toString()}`;
   }
 
