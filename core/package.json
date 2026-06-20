@@ -1,7 +1,7 @@
 {
   "name": "@swr/core",
   "version": "0.1.0",
-  "description": "Framework-agnostic business logic for Southwest Rebooker (models, pricing engine, airline providers).",
+  "description": "Framework-agnostic business logic for Rebook Radar (models, pricing engine, airline providers).",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

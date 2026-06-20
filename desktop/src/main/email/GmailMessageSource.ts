@@ -161,7 +161,7 @@ export class GmailMessageSource implements EmailMessageSource {
       }
       client.setCredentials(tokens);
       const email = await this.fetchProfileEmail(client).catch(() => undefined);
-      respondHtml(res, 'Connected to Gmail! You can close this tab and return to Southwest Rebooker.');
+      respondHtml(res, 'Connected to Gmail! You can close this tab and return to Rebook Radar.');
       finish(() => resolve({ refreshToken, email }));
     } catch (err) {
       respondHtml(res, 'Failed to complete authorization. You can close this tab.');
@@ -268,10 +268,10 @@ export class GmailMessageSource implements EmailMessageSource {
 function respondHtml(res: ServerResponse, message: string): void {
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(
-    `<!doctype html><html><head><meta charset="utf-8"><title>Southwest Rebooker</title></head>` +
+    `<!doctype html><html><head><meta charset="utf-8"><title>Rebook Radar</title></head>` +
       `<body style="font-family:system-ui;background:#0f172a;color:#e2e8f0;display:flex;` +
       `align-items:center;justify-content:center;height:100vh;margin:0">` +
-      `<div style="text-align:center"><h2 style="color:#38bdf8">Southwest Rebooker</h2>` +
+      `<div style="text-align:center"><h2 style="color:#38bdf8">Rebook Radar</h2>` +
       `<p>${message}</p></div></body></html>`,
   );
 }

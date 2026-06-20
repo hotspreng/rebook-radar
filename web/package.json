@@ -2,7 +2,7 @@
   "name": "@swr/web",
   "version": "0.1.0",
   "private": true,
-  "description": "Future web client for Southwest Rebooker — reuses @swr/core unchanged to prove portability.",
+  "description": "Future web client for Rebook Radar — reuses @swr/core unchanged to prove portability.",
   "type": "module",
   "scripts": {
     "dev": "vite",

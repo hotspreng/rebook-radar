@@ -23,8 +23,8 @@ export function Sidebar({
           <Plane size={20} className="text-white" />
         </div>
         <div>
-          <p className="text-sm font-semibold text-slate-100">Southwest</p>
-          <p className="text-xs text-slate-400">Rebooker</p>
+          <p className="text-sm font-semibold text-slate-100">Rebook</p>
+          <p className="text-xs text-slate-400">Radar</p>
         </div>
       </div>
       <nav className="flex flex-1 flex-col gap-1 px-3 py-2">

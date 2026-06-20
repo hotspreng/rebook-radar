@@ -1,5 +1,5 @@
 {
-  "name": "southwest-rebooker",
+  "name": "rebook-radar",
   "version": "0.1.0",
   "private": true,
   "description": "Compare originally-paid vs current Southwest Airlines fares (cash or Rapid Rewards points) to decide whether to cancel and rebook.",

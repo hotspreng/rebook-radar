@@ -61,7 +61,7 @@ export function App(): JSX.Element {
 
   return (
     <div style={{ maxWidth: 640, margin: '60px auto', padding: 24 }}>
-      <h1 style={{ marginBottom: 4 }}>Southwest Rebooker — Web preview</h1>
+      <h1 style={{ marginBottom: 4 }}>Rebook Radar — Web preview</h1>
       <p style={{ color: '#94a3b8' }}>
         Running <code>@swr/core</code> directly in the browser. Same engine as the desktop app.
       </p>

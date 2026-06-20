@@ -22,7 +22,7 @@ function createWindow(): void {
     minHeight: 640,
     show: false,
     autoHideMenuBar: true,
-    title: 'Southwest Rebooker',
+    title: 'Rebook Radar',
     icon: appIcon,
     backgroundColor: '#0f172a',
     webPreferences: {
@@ -50,7 +50,7 @@ function send(channel: string, payload: unknown): void {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.southwestrebooker.app');
+  electronApp.setAppUserModelId('com.rebookradar.app');
 
   const config = loadAppConfig();
   await initDatabase();

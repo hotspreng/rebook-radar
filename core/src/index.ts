@@ -1,5 +1,5 @@
 /**
- * @swr/core — framework-agnostic business logic for Southwest Rebooker.
+ * @swr/core — framework-agnostic business logic for Rebook Radar.
  *
  * Import everything UI/host layers need from here:
  *   import { PricingComparisonService, SouthwestProvider } from '@swr/core';

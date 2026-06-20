@@ -1,4 +1,4 @@
-# Southwest Rebooker
+# Rebook Radar
 
 A Windows desktop app that compares the price you **originally paid** (cash or
 Rapid Rewards points) for Southwest Airlines flights against the **current
@@ -90,7 +90,7 @@ the desktop and web apps can import it.
 
 ```powershell
 npm run build:win
-# Output: desktop/release/Southwest Rebooker-<version>-setup.exe
+# Output: desktop/release/Rebook Radar-<version>-setup.exe
 ```
 
 ### Run the web preview (proves core portability)

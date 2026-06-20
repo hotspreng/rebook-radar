@@ -87,7 +87,7 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
     const window = getWindow();
     const { canceled, filePath } = await dialog.showSaveDialog(window ?? undefined!, {
       title: 'Export tracked flights to CSV',
-      defaultPath: `southwest-rebooker-${new Date().toISOString().slice(0, 10)}.csv`,
+      defaultPath: `rebook-radar-${new Date().toISOString().slice(0, 10)}.csv`,
       filters: [{ name: 'CSV', extensions: ['csv'] }],
     });
     if (canceled || !filePath) return { saved: false };
