@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS flights (
   cash_usd REAL,
   points INTEGER,
   taxes_fees_usd REAL NOT NULL DEFAULT 0,
+  original_market_cash_usd REAL,
   segments_json TEXT,
   payments_json TEXT,
   booking_date TEXT NOT NULL,
@@ -95,4 +96,5 @@ export const MIGRATIONS: { table: string; column: string; ddl: string }[] = [
   { table: 'flights', column: 'duration_minutes', ddl: 'ALTER TABLE flights ADD COLUMN duration_minutes INTEGER' },
   { table: 'flights', column: 'segments_json', ddl: 'ALTER TABLE flights ADD COLUMN segments_json TEXT' },
   { table: 'flights', column: 'payments_json', ddl: 'ALTER TABLE flights ADD COLUMN payments_json TEXT' },
+  { table: 'flights', column: 'original_market_cash_usd', ddl: 'ALTER TABLE flights ADD COLUMN original_market_cash_usd REAL' },
 ];

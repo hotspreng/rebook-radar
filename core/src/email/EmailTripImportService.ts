@@ -30,6 +30,8 @@ interface FoldState {
   trip?: RetrievedTrip;
   cancelled: boolean;
   lastEventAt: number;
+  /** When the latest booking confirmation arrived (ms since epoch). */
+  bookedAt?: number;
 }
 
 /**
@@ -74,6 +76,7 @@ export class EmailTripImportService {
         case TripEventType.Booked:
           state.cancelled = false;
           state.trip = event.trip ?? state.trip;
+          state.bookedAt = event.occurredAt;
           break;
         case TripEventType.Changed:
           state.cancelled = false;
@@ -92,7 +95,8 @@ export class EmailTripImportService {
         continue;
       }
       if (!state.trip) continue;
-      if (isFutureTrip(state.trip, now, includeUndated)) active.push(state.trip);
+      const trip = state.bookedAt != null ? { ...state.trip, bookedAt: state.bookedAt } : state.trip;
+      if (isFutureTrip(trip, now, includeUndated)) active.push(trip);
     }
 
     return {

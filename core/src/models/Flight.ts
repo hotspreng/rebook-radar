@@ -67,6 +67,12 @@ export interface Flight {
 
   /** What was originally paid for this flight. */
   originalCost: BookingCost;
+  /**
+   * Actual market cash fare observed via a price check near the time of
+   * booking, when captured. Lets the UI show a real ("actual") cash value for
+   * a points booking instead of a points-to-cash estimate.
+   */
+  originalMarketCashUsd?: number;
   /** Date the booking was made. */
   bookingDate: IsoDate;
 

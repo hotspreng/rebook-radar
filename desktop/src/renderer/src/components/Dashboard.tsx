@@ -94,6 +94,8 @@ export function Dashboard(): JSX.Element {
         points: number;
         cashUsd: number;
         valueUsd: number;
+        marketCashUsd: number;
+        marketCashCount: number;
         currentAmount: number;
         savingsNative: number;
         quoted: number;
@@ -111,6 +113,8 @@ export function Dashboard(): JSX.Element {
           points: 0,
           cashUsd: 0,
           valueUsd: 0,
+          marketCashUsd: 0,
+          marketCashCount: 0,
           currentAmount: 0,
           savingsNative: 0,
           quoted: 0,
@@ -121,6 +125,10 @@ export function Dashboard(): JSX.Element {
       g.points += it.flight.originalCost.points ?? 0;
       g.cashUsd += it.flight.originalCost.cashUsd ?? 0;
       g.valueUsd += it.comparison?.originalValueUsd ?? 0;
+      if (it.flight.originalMarketCashUsd != null) {
+        g.marketCashUsd += it.flight.originalMarketCashUsd;
+        g.marketCashCount += 1;
+      }
       if (it.comparison?.currentAmount != null) {
         g.currentAmount += it.comparison.currentAmount;
         g.savingsNative += it.comparison.savingsNative ?? 0;
@@ -379,10 +387,20 @@ export function Dashboard(): JSX.Element {
                               <span className="mt-0.5 block text-[11px] text-slate-500">
                                 round trip · {group!.count} legs
                               </span>
-                              {isPoints && group!.valueUsd > 0 && (
+                              {isPoints &&
+                              group!.marketCashCount > 0 &&
+                              group!.marketCashCount === group!.count ? (
                                 <span className="block text-[11px] text-slate-500">
-                                  ≈ {formatUsd(group!.valueUsd)}
+                                  {formatUsd(group!.marketCashUsd)}{' '}
+                                  <span className="text-emerald-500">actual</span>
                                 </span>
+                              ) : (
+                                isPoints &&
+                                group!.valueUsd > 0 && (
+                                  <span className="block text-[11px] text-slate-500">
+                                    ≈ {formatUsd(group!.valueUsd)} est.
+                                  </span>
+                                )
                               )}
                             </>
                           ) : (
@@ -394,10 +412,18 @@ export function Dashboard(): JSX.Element {
                               isPoints ? item.flight.originalCost.points : item.flight.originalCost.cashUsd,
                               type,
                             )}
-                            {isPoints && c?.originalValueUsd != null && (
+                            {isPoints && item.flight.originalMarketCashUsd != null ? (
                               <span className="mt-0.5 block text-[11px] text-slate-500">
-                                ≈ {formatUsd(c.originalValueUsd)}
+                                {formatUsd(item.flight.originalMarketCashUsd)}{' '}
+                                <span className="text-emerald-500">actual</span>
                               </span>
+                            ) : (
+                              isPoints &&
+                              c?.originalValueUsd != null && (
+                                <span className="mt-0.5 block text-[11px] text-slate-500">
+                                  ≈ {formatUsd(c.originalValueUsd)} est.
+                                </span>
+                              )
                             )}
                           </>
                         )}

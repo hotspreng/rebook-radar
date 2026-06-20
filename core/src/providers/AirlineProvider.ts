@@ -29,6 +29,12 @@ export interface RetrievedTrip {
   paidCashUsd?: number;
   paidPoints?: number;
   taxesAndFeesUsd?: number;
+  /**
+   * When the booking confirmation email arrived (ms since epoch), when known.
+   * Approximates when the trip was booked; used to capture an actual market
+   * price for very recent bookings.
+   */
+  bookedAt?: number;
   /** Operated segments for this direction (present when there is a connection). */
   segments?: RetrievedFlightSegment[];
   /** How the booking was funded (credits, vouchers, points, card), when known. */

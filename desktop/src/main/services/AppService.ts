@@ -6,6 +6,7 @@ import {
   GoogleFlightsSerpApiProvider,
   PriceCheckService,
   PricingComparisonService,
+  PurchaseType,
   SouthwestProvider,
   estimatePointsFromCash,
   exportFlightsToCsv,
@@ -413,13 +414,18 @@ export class AppService {
           legTrip.departureDateTime,
         );
         const prior = byLegKey.get(key);
+        let flight: Flight;
         if (prior) {
-          await this.deps.flights.update(this.mergeEmailTripIntoFlight(prior, legTrip));
+          flight = this.mergeEmailTripIntoFlight(prior, legTrip);
+          await this.deps.flights.update(flight);
           updated += 1;
         } else {
-          await this.createFlightFromEmailTrip(passengerId, legTrip);
+          flight = await this.createFlightFromEmailTrip(passengerId, legTrip);
           imported += 1;
         }
+        // For a brand-new booking, capture the real market fare so the
+        // original cost shows an "actual" price instead of an estimate.
+        await this.maybeCaptureBookingPrice(flight, legTrip.bookedAt);
       }
     }
 
@@ -521,10 +527,10 @@ export class AppService {
     };
   }
 
-  private async createFlightFromEmailTrip(passengerId: string, trip: RetrievedTrip): Promise<void> {
+  private async createFlightFromEmailTrip(passengerId: string, trip: RetrievedTrip): Promise<Flight> {
     const now = new Date().toISOString();
     const isPoints = trip.paidPoints != null;
-    await this.deps.flights.create({
+    return this.deps.flights.create({
       id: generateId('flt'),
       passengerId,
       accountId: undefined,
@@ -551,6 +557,45 @@ export class AppService {
       createdAt: now,
       updatedAt: now,
     });
+  }
+
+  /**
+   * When a points booking was made within the last 24 hours, run a one-off
+   * price check and store the real market cash fare on the flight. The
+   * Dashboard then shows that fare as the "actual" value for the original cost
+   * (rather than a points-to-cash estimate). Best-effort: skipped silently when
+   * no provider is configured or the lookup fails.
+   */
+  private async maybeCaptureBookingPrice(flight: Flight, bookedAt?: number): Promise<void> {
+    if (bookedAt == null) return;
+    if (Date.now() - bookedAt > 24 * 60 * 60 * 1000) return;
+    // Only points bookings show an estimated cash value worth replacing.
+    if (flight.originalCost.purchaseType !== PurchaseType.Points) return;
+    // Don't re-fetch once we've already captured an actual fare.
+    if (flight.originalMarketCashUsd != null) return;
+    try {
+      const provider = this.createProvider();
+      const options = this.comparisonOptions();
+      const result = await this.priceCheck.check(flight, provider, undefined, options);
+      const cash = result.quote?.cashUsd;
+      if (cash == null || !Number.isFinite(cash)) return;
+      const updated: Flight = {
+        ...flight,
+        originalMarketCashUsd: cash,
+        updatedAt: new Date().toISOString(),
+      };
+      await this.deps.flights.update(updated);
+      // Persist the quote/comparison so the current price shows right away too.
+      await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
+      await this.recordPriceHistory(flight.id, result.quote, result.comparison);
+      log.info('Captured actual booking price', {
+        flightId: flight.id,
+        confirmation: flight.confirmationNumber,
+        cashUsd: cash,
+      });
+    } catch (err) {
+      log.warn('Booking price capture failed', { flightId: flight.id, error: String(err) });
+    }
   }
 
   // --- Flights -------------------------------------------------------------
