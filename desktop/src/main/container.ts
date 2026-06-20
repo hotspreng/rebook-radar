@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import type { AppConfig } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AlertEvent, MonitorStatus, PriceUpdateEvent } from '../shared/dto.js';
+import type { AlertEvent, EmailImportProgress, MonitorStatus, PriceUpdateEvent } from '../shared/dto.js';
 import { SqliteAccountRepository } from './database/repositories/SqliteAccountRepository.js';
 import { SqliteFlightRepository } from './database/repositories/SqliteFlightRepository.js';
 import { SqlitePassengerRepository } from './database/repositories/SqlitePassengerRepository.js';
@@ -29,6 +29,7 @@ export interface ContainerEmitters {
   status: (s: MonitorStatus) => void;
   priceUpdate: (e: PriceUpdateEvent) => void;
   alert: (e: AlertEvent) => void;
+  emailProgress: (e: EmailImportProgress) => void;
 }
 
 /**
@@ -70,6 +71,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
     debugDir,
     scraperProfileDir,
     openExternal: (url: string) => shell.openExternal(url),
+    onEmailProgress: emit.emailProgress,
   });
 
   const monitor = new PriceMonitor({

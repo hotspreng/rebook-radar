@@ -1,6 +1,6 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { PurchaseType, Recommendation } from '@swr/core';
-import type { Flight, FlightWithComparison } from '@shared/dto';
+import type { EmailImportProgress, Flight, FlightWithComparison } from '@shared/dto';
 import {
   ArrowRight,
   ChevronRight,
@@ -19,6 +19,16 @@ import { AlternativesPanel, getCheaperAlternatives } from './AlternativesPanel.j
 import { formatDate, formatDateTime, formatDuration, formatNative, formatTime, formatUsd } from '../lib/format.js';
 
 const api = window.swr;
+
+/** One-line live status for an in-flight email import (emails + trips found). */
+function importProgressLabel(p: EmailImportProgress): string {
+  const scanned = p.total != null ? `${p.scanned}/${p.total}` : `${p.scanned}`;
+  const trips =
+    p.tripsFound != null ? ` · ${p.tripsFound} trip${p.tripsFound === 1 ? '' : 's'} found` : '';
+  if (p.phase === 'scanning') return `Scanning ${scanned} email${p.scanned === 1 ? '' : 's'}…`;
+  if (p.phase === 'parsing') return `Scanned ${scanned} emails${trips}`;
+  return `Done · ${p.scanned} email${p.scanned === 1 ? '' : 's'} scanned${trips}`;
+}
 
 /**
  * The most recent price movement for a flight: the delta (in native units)
@@ -70,6 +80,21 @@ export function Dashboard(): JSX.Element {
   const [checkingAll, setCheckingAll] = useState(false);
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<EmailImportProgress | null>(null);
+
+  // Live import progress streamed from the main process (emails scanned, trips
+  // found). Auto-clears a few seconds after the import finishes.
+  useEffect(() => {
+    return api.onEmailImportProgress((e) => {
+      setImportProgress(e);
+      if (e.phase === 'done') {
+        window.setTimeout(
+          () => setImportProgress((cur) => (cur?.phase === 'done' ? null : cur)),
+          5000,
+        );
+      }
+    });
+  }, []);
 
   const filtered = useMemo(
     () =>
@@ -206,6 +231,7 @@ export function Dashboard(): JSX.Element {
 
   async function handleImport(): Promise<void> {
     setImporting(true);
+    setImportProgress({ phase: 'scanning', scanned: 0, tripsFound: 0 });
     try {
       const r = await api.email.import();
       await refreshFlights();
@@ -235,9 +261,16 @@ export function Dashboard(): JSX.Element {
           <p className="text-sm text-slate-400">Track paid vs current Southwest prices.</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={handleImport} disabled={importing}>
-            <Inbox size={16} className={importing ? 'animate-pulse' : ''} /> Import trips now
-          </Button>
+          <div className="relative">
+            <Button variant="secondary" onClick={handleImport} disabled={importing}>
+              <Inbox size={16} className={importing ? 'animate-pulse' : ''} /> Import trips now
+            </Button>
+            {importProgress && (
+              <span className="absolute left-0 top-full mt-1 whitespace-nowrap text-[11px] text-slate-400">
+                {importProgressLabel(importProgress)}
+              </span>
+            )}
+          </div>
           <Button variant="secondary" onClick={handleExport}>
             <Download size={16} /> Export CSV
           </Button>

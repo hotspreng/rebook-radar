@@ -35,7 +35,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { PlaywrightSouthwestClient } from '../scraping/PlaywrightSouthwestClient.js';
 import { GmailMessageSource } from '../email/GmailMessageSource.js';
@@ -140,6 +140,8 @@ export interface AppServiceDeps {
   scraperProfileDir: string;
   /** Opens a URL in the user's default browser (used for Gmail OAuth consent). */
   openExternal: (url: string) => Promise<void>;
+  /** Reports live progress while an email import runs (main → renderer). */
+  onEmailProgress?: (e: EmailImportProgress) => void;
 }
 
 /**
@@ -352,6 +354,8 @@ export class AppService {
       throw new Error('Gmail is not connected. Connect your account in Settings first.');
     }
 
+    this.deps.onEmailProgress?.({ phase: 'scanning', scanned: 0, tripsFound: 0 });
+
     // Transactional confirmations/changes/cancellations come ONLY from
     // southwestairlines@ifly.southwest.com. Anchoring on that sender keeps
     // marketing mail out entirely so we never manufacture phantom trips.
@@ -367,6 +371,12 @@ export class AppService {
     }
 
     const folded = new EmailTripImportService().fold(messages, { now: new Date() });
+    this.deps.onEmailProgress?.({
+      phase: 'parsing',
+      scanned: messages.length,
+      total: messages.length,
+      tripsFound: folded.active.length,
+    });
     log.info('Parsed Gmail trip emails', {
       scanned: messages.length,
       events: folded.events,
@@ -441,6 +451,12 @@ export class AppService {
 
     this.deps.settings.update({ lastEmailImportAt: new Date().toISOString() });
     log.info('Email import complete', { imported, updated, cancelled, skipped });
+    this.deps.onEmailProgress?.({
+      phase: 'done',
+      scanned: messages.length,
+      total: messages.length,
+      tripsFound: folded.active.length,
+    });
     return { scanned: messages.length, imported, updated, cancelled, skipped };
   }
 
@@ -456,6 +472,9 @@ export class AppService {
       clientSecret,
       refreshToken: refreshToken ?? undefined,
       debugDump: s.debugMode ? (label, content) => this.dumpDebug(label, content) : undefined,
+      onProgress: this.deps.onEmailProgress
+        ? (done, total) => this.deps.onEmailProgress?.({ phase: 'scanning', scanned: done, total })
+        : undefined,
     });
   }
 

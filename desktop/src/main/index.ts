@@ -59,6 +59,7 @@ app.whenReady().then(async () => {
     status: (s) => send(IPC.evtMonitorStatus, s),
     priceUpdate: (e) => send(IPC.evtPriceUpdate, e),
     alert: (e) => send(IPC.evtAlert, e),
+    emailProgress: (e) => send(IPC.evtEmailImportProgress, e),
   });
 
   registerIpcHandlers(container, () => mainWindow);

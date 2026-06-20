@@ -100,6 +100,18 @@ export interface EmailImportResult {
   skipped: number;
 }
 
+/** Live progress emitted while an email import is running. */
+export interface EmailImportProgress {
+  /** Current stage of the import. */
+  phase: 'scanning' | 'parsing' | 'done';
+  /** Emails scanned (bodies fetched) so far. */
+  scanned: number;
+  /** Total emails to scan, once the inbox query has been listed. */
+  total?: number;
+  /** Active upcoming trips found after parsing, when known. */
+  tripsFound?: number;
+}
+
 /** Input for creating an account, including the password to store securely. */
 export interface CreateAccountInput {
   account: NewAccount;

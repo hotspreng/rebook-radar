@@ -18,6 +18,8 @@ export interface GmailMessageSourceOptions {
   log?: Logger;
   /** Optional sink for raw email bodies when debug mode is on (for tuning). */
   debugDump?: (label: string, content: string) => void;
+  /** Reports body-fetch progress as messages are downloaded. */
+  onProgress?: (done: number, total: number) => void;
 }
 
 interface GmailListResponse {
@@ -193,6 +195,7 @@ export class GmailMessageSource implements EmailMessageSource {
 
     const capped = ids.slice(0, cap);
     this.log.info('Listed Gmail messages', { matched: ids.length, fetching: capped.length });
+    this.options.onProgress?.(0, capped.length);
 
     // Fetch message bodies in parallel batches (Gmail per-user rate limits are
     // generous; sequential GETs made a 400-email import take minutes).
@@ -211,6 +214,7 @@ export class GmailMessageSource implements EmailMessageSource {
       );
       messages.push(...fetched);
       this.log.info('Fetching Gmail bodies', { done: messages.length, total: capped.length });
+      this.options.onProgress?.(messages.length, capped.length);
     }
     this.log.info('Fetched Gmail messages', { count: messages.length });
     return messages;

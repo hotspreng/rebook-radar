@@ -5,6 +5,7 @@ import type {
   AlertEvent,
   AppSettings,
   CreateAccountInput,
+  EmailImportProgress,
   EmailImportResult,
   EmailStatus,
   FlightWithComparison,
@@ -89,6 +90,8 @@ const api: SwrApi = {
   onPriceUpdate: (cb: (e: PriceUpdateEvent) => void) => subscribe(IPC.evtPriceUpdate, cb),
   onAlert: (cb: (e: AlertEvent) => void) => subscribe(IPC.evtAlert, cb),
   onMonitorStatus: (cb: (s: MonitorStatus) => void) => subscribe(IPC.evtMonitorStatus, cb),
+  onEmailImportProgress: (cb: (e: EmailImportProgress) => void) =>
+    subscribe(IPC.evtEmailImportProgress, cb),
 };
 
 contextBridge.exposeInMainWorld('swr', api);
