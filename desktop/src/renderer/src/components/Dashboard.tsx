@@ -1,7 +1,16 @@
 import { Fragment, useMemo, useState } from 'react';
 import { PurchaseType, Recommendation } from '@swr/core';
 import type { Flight, FlightWithComparison } from '@shared/dto';
-import { ArrowRight, ChevronRight, Download, Inbox, Plus, RefreshCw, TrendingDown } from 'lucide-react';
+import {
+  ArrowRight,
+  ChevronRight,
+  Download,
+  Inbox,
+  Plus,
+  RefreshCw,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react';
 import { useAppStore } from '../store/useAppStore.js';
 import { Button, Card, RecommendationBadge } from './ui.js';
 import { FlightFormModal } from './FlightFormModal.js';
@@ -271,6 +280,9 @@ export function Dashboard(): JSX.Element {
                 const type = item.flight.originalCost.purchaseType;
                 const c = item.comparison;
                 const savingsPositive = (c?.savingsNative ?? 0) > 0;
+                const savingsNegative = (c?.savingsNative ?? 0) < 0;
+                // Negative savings means the current price is HIGHER than booked.
+                const currentMoreExpensive = savingsNegative;
                 const isPoints = type === PurchaseType.Points;
                 const currentAmount = c?.currentAmount;
                 // Cheaper same-day options priced below the matched/current one.
@@ -374,7 +386,13 @@ export function Dashboard(): JSX.Element {
                       <td className="px-4 py-3 text-right text-slate-300">
                         {isRoundTrip ? (
                           <>
-                            {currentAmount != null ? formatNative(currentAmount, type) : '—'}
+                            {currentAmount != null ? (
+                              <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
+                                {formatNative(currentAmount, type)}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
                             {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
                               <span className="ml-1 text-[10px] text-slate-500">est.</span>
                             )}
@@ -384,7 +402,9 @@ export function Dashboard(): JSX.Element {
                               </span>
                             )}
                             {group!.quoted === group!.count ? (
-                              <span className="block text-[11px] text-slate-500">
+                              <span
+                                className={`block text-[11px] ${group!.savingsNative < 0 ? 'text-rose-400' : 'text-slate-500'}`}
+                              >
                                 total {formatNative(group!.currentAmount, type)} · both legs
                               </span>
                             ) : (
@@ -395,7 +415,13 @@ export function Dashboard(): JSX.Element {
                           </>
                         ) : (
                           <>
-                            {currentAmount != null ? formatNative(currentAmount, type) : '—'}
+                            {currentAmount != null ? (
+                              <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
+                                {formatNative(currentAmount, type)}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
                             {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
                               <span className="ml-1 text-[10px] text-slate-500">est.</span>
                             )}
@@ -424,15 +450,32 @@ export function Dashboard(): JSX.Element {
                           </>
                         )}
                       </td>
-                      <td className={`px-4 py-3 text-right ${savingsPositive ? 'text-emerald-400' : 'text-slate-400'}`}>
+                      <td
+                        className={`px-4 py-3 text-right ${
+                          savingsPositive
+                            ? 'text-emerald-400'
+                            : savingsNegative
+                              ? 'text-rose-400'
+                              : 'text-slate-400'
+                        }`}
+                      >
                         {isRoundTrip ? (
                           isFirstLeg ? (
                             group!.quoted === group!.count ? (
                               <span
-                                className={`inline-flex items-center gap-1 ${group!.savingsNative > 0 ? 'text-emerald-400' : 'text-slate-400'}`}
+                                className={`inline-flex items-center gap-1 ${
+                                  group!.savingsNative > 0
+                                    ? 'text-emerald-400'
+                                    : group!.savingsNative < 0
+                                      ? 'text-rose-400'
+                                      : 'text-slate-400'
+                                }`}
                               >
                                 {group!.savingsNative > 0 && <TrendingDown size={13} />}
-                                {formatNative(group!.savingsNative, type)}
+                                {group!.savingsNative < 0 && <TrendingUp size={13} />}
+                                {group!.savingsNative < 0
+                                  ? `+${formatNative(-group!.savingsNative, type)}`
+                                  : formatNative(group!.savingsNative, type)}
                               </span>
                             ) : (
                               <span className="text-[11px] text-slate-500">
@@ -445,7 +488,10 @@ export function Dashboard(): JSX.Element {
                         ) : c?.savingsNative != null ? (
                           <span className="inline-flex items-center gap-1">
                             {savingsPositive && <TrendingDown size={13} />}
-                            {formatNative(c.savingsNative, type)}
+                            {savingsNegative && <TrendingUp size={13} />}
+                            {savingsNegative
+                              ? `+${formatNative(-c.savingsNative, type)}`
+                              : formatNative(c.savingsNative, type)}
                           </span>
                         ) : (
                           '—'
@@ -501,7 +547,11 @@ export function Dashboard(): JSX.Element {
                           <AlternativesPanel
                             alternatives={cheaper}
                             isPoints={isPoints}
-                            currentAmount={currentAmount}
+                            originalAmount={
+                              isPoints
+                                ? item.flight.originalCost.points
+                                : item.flight.originalCost.cashUsd
+                            }
                           />
                         </td>
                       </tr>

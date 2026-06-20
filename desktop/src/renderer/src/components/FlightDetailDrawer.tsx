@@ -172,7 +172,9 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
               <AlternativesPanel
                 alternatives={cheaper}
                 isPoints={isPoints}
-                currentAmount={comparison?.currentAmount}
+                originalAmount={
+                  isPoints ? flight.originalCost.points : flight.originalCost.cashUsd
+                }
               />
             </section>
           )}

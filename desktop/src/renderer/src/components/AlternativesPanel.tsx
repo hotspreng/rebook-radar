@@ -25,11 +25,12 @@ export function getCheaperAlternatives(item: FlightWithComparison): Alternative[
 export function AlternativesPanel({
   alternatives,
   isPoints,
-  currentAmount,
+  originalAmount,
 }: {
   alternatives: Alternatives;
   isPoints: boolean;
-  currentAmount?: number;
+  /** What the traveler originally paid, in the booking unit (points or USD). */
+  originalAmount?: number;
 }): JSX.Element {
   const list = alternatives ?? [];
   const type = isPoints ? PurchaseType.Points : PurchaseType.Cash;
@@ -47,13 +48,14 @@ export function AlternativesPanel({
               <th className="px-3 py-2">Duration</th>
               <th className="px-3 py-2">Flight</th>
               <th className="px-3 py-2 text-right">Price</th>
-              <th className="px-3 py-2 text-right">vs current</th>
+              <th className="px-3 py-2 text-right">vs paid</th>
             </tr>
           </thead>
           <tbody>
             {list.map((alt, i) => {
               const price = isPoints ? alt.points : alt.cashUsd;
-              const diff = currentAmount != null && price != null ? currentAmount - price : undefined;
+              const diff =
+                originalAmount != null && price != null ? originalAmount - price : undefined;
               return (
                 <tr
                   key={`${alt.departureDateTime}-${alt.flightNumber ?? i}`}
