@@ -111,6 +111,8 @@ function expandTripLegs(trip: RetrievedTrip): RetrievedTrip[] {
     paidPoints: splitEven(trip.paidPoints),
     paidCashUsd: splitEven(trip.paidCashUsd),
     taxesAndFeesUsd: splitEven(trip.taxesAndFeesUsd),
+    originalPaidPoints: splitEven(trip.originalPaidPoints),
+    originalPaidCashUsd: splitEven(trip.originalPaidCashUsd),
     legs: undefined,
   }));
 }
@@ -427,6 +429,11 @@ export class AppService {
     let cancelled = 0;
     let skipped = 0;
 
+    // Cancelled trips expanded to per-leg fares, so a re-book under a NEW
+    // confirmation number (same passenger/route/date, lower price) can be
+    // credited as a saving against the cancelled fare.
+    const cancelledLegs = folded.cancelledTrips.flatMap((t) => expandTripLegs(t));
+
     for (const trip of folded.active) {
       const passengerId = await this.resolvePassengerForImport(passengers, trip.passengerNames);
       if (!passengerId) {
@@ -457,6 +464,16 @@ export class AppService {
         } else {
           flight = await this.createFlightFromEmailTrip(passengerId, legTrip);
           imported += 1;
+        }
+        // A change to a cheaper fare under the SAME confirmation number, caught
+        // within a single import via the leg's frozen original fare.
+        await this.maybeRecordSameImportRebooking(flight, legTrip);
+        // Cancel-and-rebook under a NEW confirmation number: credit the drop
+        // against the cancelled trip's fare for the same passenger/route/date.
+        // Runs for re-imported flights too (the double-count guard dedupes).
+        const cancelledMatch = this.findCancelledRebookMatch(cancelledLegs, legTrip);
+        if (cancelledMatch) {
+          await this.maybeRecordCancelRebooking(flight, legTrip, cancelledMatch);
         }
         // For a brand-new booking, capture the real market fare so the
         // original cost shows an "actual" price instead of an estimate.
@@ -550,10 +567,22 @@ export class AppService {
     // (that drop is recorded as a RebookEvent instead). We only backfill an
     // original amount that was previously missing.
     const original = existing.originalCost;
+    const baselineCash = original.cashUsd ?? trip.paidCashUsd;
+    const baselinePoints = original.points ?? trip.paidPoints;
     const mergedOriginal: Flight['originalCost'] = {
       purchaseType: original.purchaseType,
-      cashUsd: original.cashUsd ?? trip.paidCashUsd,
-      points: original.points ?? trip.paidPoints,
+      // Raise the baseline to the fold's surfaced original fare when it is
+      // higher. This also corrects a baseline an earlier import stored too low,
+      // which happens when the original booking and a cheaper change/rebook
+      // arrived in the same import and collapsed to the lower price.
+      cashUsd:
+        trip.originalPaidCashUsd != null
+          ? Math.max(baselineCash ?? 0, trip.originalPaidCashUsd)
+          : baselineCash,
+      points:
+        trip.originalPaidPoints != null
+          ? Math.max(baselinePoints ?? 0, trip.originalPaidPoints)
+          : baselinePoints,
       taxesAndFeesUsd: original.taxesAndFeesUsd ?? trip.taxesAndFeesUsd ?? 0,
       payments: original.payments ?? trip.payments,
     };
@@ -587,8 +616,107 @@ export class AppService {
    */
   private async maybeRecordRebooking(prior: Flight, trip: RetrievedTrip): Promise<void> {
     const isPoints = prior.originalCost.purchaseType === PurchaseType.Points;
-    const originalAmount = isPoints ? prior.originalCost.points : prior.originalCost.cashUsd;
+    await this.recordRebookingSaving({
+      flightId: prior.id,
+      passengerId: prior.passengerId,
+      confirmationNumber: trip.confirmationNumber || prior.confirmationNumber,
+      routeLabel: `${prior.route.origin.code} → ${prior.route.destination.code}`,
+      departureDate: (trip.departureDateTime || prior.departureDateTime).slice(0, 10),
+      purchaseType: prior.originalCost.purchaseType,
+      originalAmount: isPoints ? prior.originalCost.points : prior.originalCost.cashUsd,
+      newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
+    });
+  }
+
+  /**
+   * Record a saving when a single import contains BOTH the original booking and
+   * a later cheaper change under the SAME confirmation number. The fold surfaces
+   * the original (higher) fare on the leg via `originalPaid*`, so the drop is
+   * caught even though the app never stored the original price separately.
+   */
+  private async maybeRecordSameImportRebooking(flight: Flight, trip: RetrievedTrip): Promise<void> {
+    const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
+    const originalAmount = isPoints ? trip.originalPaidPoints : trip.originalPaidCashUsd;
+    if (originalAmount == null) return;
+    await this.recordRebookingSaving({
+      flightId: flight.id,
+      passengerId: flight.passengerId,
+      confirmationNumber: trip.confirmationNumber || flight.confirmationNumber,
+      routeLabel: `${flight.route.origin.code} → ${flight.route.destination.code}`,
+      departureDate: (trip.departureDateTime || flight.departureDateTime).slice(0, 10),
+      purchaseType: flight.originalCost.purchaseType,
+      originalAmount,
+      newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
+    });
+  }
+
+  /**
+   * Record a saving when a trip was cancelled and re-booked under a NEW
+   * confirmation number for the same passenger/route/date at a lower price.
+   * The cancelled trip's last-known fare is the baseline.
+   */
+  private async maybeRecordCancelRebooking(
+    flight: Flight,
+    trip: RetrievedTrip,
+    cancelledMatch: RetrievedTrip,
+  ): Promise<void> {
+    const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
+    await this.recordRebookingSaving({
+      flightId: flight.id,
+      passengerId: flight.passengerId,
+      confirmationNumber: trip.confirmationNumber || flight.confirmationNumber,
+      routeLabel: `${flight.route.origin.code} → ${flight.route.destination.code}`,
+      departureDate: (trip.departureDateTime || flight.departureDateTime).slice(0, 10),
+      purchaseType: flight.originalCost.purchaseType,
+      originalAmount: isPoints ? cancelledMatch.paidPoints : cancelledMatch.paidCashUsd,
+      newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
+    });
+  }
+
+  /**
+   * Find a cancelled leg that this newly-booked leg replaces: same origin,
+   * destination and departure DATE (time may differ), an overlapping passenger
+   * name, and a higher fare of the matching type than the new booking.
+   */
+  private findCancelledRebookMatch(
+    cancelledLegs: RetrievedTrip[],
+    trip: RetrievedTrip,
+  ): RetrievedTrip | undefined {
+    const origin = (trip.origin ?? '').toUpperCase();
+    const destination = (trip.destination ?? '').toUpperCase();
+    const date = (trip.departureDateTime ?? '').slice(0, 10);
+    if (!origin || !destination || !date) return undefined;
+    const isPoints = trip.paidPoints != null;
     const newAmount = isPoints ? trip.paidPoints : trip.paidCashUsd;
+    if (newAmount == null) return undefined;
+
+    return cancelledLegs.find((c) => {
+      if ((c.origin ?? '').toUpperCase() !== origin) return false;
+      if ((c.destination ?? '').toUpperCase() !== destination) return false;
+      if ((c.departureDateTime ?? '').slice(0, 10) !== date) return false;
+      const oldAmount = isPoints ? c.paidPoints : c.paidCashUsd;
+      if (oldAmount == null || oldAmount <= newAmount) return false;
+      return c.passengerNames.some((cn) =>
+        trip.passengerNames.some((tn) => passengerNameMatches(cn, tn)),
+      );
+    });
+  }
+
+  /**
+   * Append a {@link RebookEvent} for a price drop, after validating it is a real
+   * saving and not a duplicate. Shared by every rebooking-detection path.
+   */
+  private async recordRebookingSaving(params: {
+    flightId: string;
+    passengerId: string;
+    confirmationNumber: string;
+    routeLabel: string;
+    departureDate: string;
+    purchaseType: PurchaseType;
+    originalAmount: number | undefined | null;
+    newAmount: number | undefined | null;
+  }): Promise<void> {
+    const { originalAmount, newAmount } = params;
     if (originalAmount == null || newAmount == null) return;
     if (!Number.isFinite(originalAmount) || !Number.isFinite(newAmount)) return;
     // Only a price DROP is a saving.
@@ -596,12 +724,13 @@ export class AppService {
 
     // Avoid double-counting: skip if we've already recorded an event for this
     // flight at this (or a lower) new amount.
-    const existingEvents = await this.deps.rebookEvents.listByFlight(prior.id);
+    const existingEvents = await this.deps.rebookEvents.listByFlight(params.flightId);
     const alreadyLower = existingEvents.some(
       (e) => Math.round(e.newAmount) <= Math.round(newAmount),
     );
     if (alreadyLower) return;
 
+    const isPoints = params.purchaseType === PurchaseType.Points;
     const pointValueCents = this.deps.settings.get().pointValueCents;
     const savedNative = originalAmount - newAmount;
     const pointsSaved = isPoints ? savedNative : undefined;
@@ -610,12 +739,12 @@ export class AppService {
 
     const event: RebookEvent = {
       id: generateId('rbk'),
-      flightId: prior.id,
-      passengerId: prior.passengerId,
-      confirmationNumber: trip.confirmationNumber || prior.confirmationNumber,
-      routeLabel: `${prior.route.origin.code} → ${prior.route.destination.code}`,
-      departureDate: (trip.departureDateTime || prior.departureDateTime).slice(0, 10),
-      purchaseType: prior.originalCost.purchaseType,
+      flightId: params.flightId,
+      passengerId: params.passengerId,
+      confirmationNumber: params.confirmationNumber,
+      routeLabel: params.routeLabel,
+      departureDate: params.departureDate,
+      purchaseType: params.purchaseType,
       originalAmount,
       newAmount,
       pointsSaved,
@@ -626,7 +755,7 @@ export class AppService {
     };
     await this.deps.rebookEvents.append(event);
     log.info('Recorded rebooking saving', {
-      flightId: prior.id,
+      flightId: params.flightId,
       confirmation: event.confirmationNumber,
       purchaseType: event.purchaseType,
       originalAmount,
@@ -654,8 +783,8 @@ export class AppService {
       fareType: trip.fareType,
       originalCost: {
         purchaseType: (trip.purchaseType ?? (isPoints ? 'points' : 'cash')) as Flight['originalCost']['purchaseType'],
-        cashUsd: trip.paidCashUsd,
-        points: trip.paidPoints,
+        cashUsd: trip.originalPaidCashUsd ?? trip.paidCashUsd,
+        points: trip.originalPaidPoints ?? trip.paidPoints,
         taxesAndFeesUsd: trip.taxesAndFeesUsd ?? 0,
         payments: trip.payments,
       },

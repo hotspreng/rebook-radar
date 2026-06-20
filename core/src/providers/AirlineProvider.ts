@@ -30,6 +30,15 @@ export interface RetrievedTrip {
   paidPoints?: number;
   taxesAndFeesUsd?: number;
   /**
+   * The FIRST-booked price for this confirmation, when it differs from the
+   * current price because the trip was later changed/rebooked at a lower fare.
+   * Populated by {@link EmailTripImportService.fold} so a price drop can be
+   * detected as a realized saving even within a single import (before the app
+   * ever stored the original price). Units mirror {@link purchaseType}.
+   */
+  originalPaidPoints?: number;
+  originalPaidCashUsd?: number;
+  /**
    * When the booking confirmation email arrived (ms since epoch), when known.
    * Approximates when the trip was booked; used to capture an actual market
    * price for very recent bookings.

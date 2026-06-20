@@ -83,6 +83,73 @@ test('a change overwrites the itinerary and merges missing fields', () => {
   assert.equal(trip.paidCashUsd, 129.98);
 });
 
+test('a change to a cheaper fare under the same PNR surfaces the original price', () => {
+  const result = svc.fold(
+    [
+      email(
+        'm1',
+        '2026-03-01T00:00:00Z',
+        'Air Reservation Confirmation',
+        'Confirmation # ABC123\n(MDW) to (LAS)\nAug 14, 2026 9:35 AM\nTotal $200.00',
+      ),
+      email(
+        'm2',
+        '2026-04-01T00:00:00Z',
+        'Air Reservation Confirmation',
+        'Confirmation # ABC123\n(MDW) to (LAS)\nAug 14, 2026 9:35 AM\nTotal $129.98',
+      ),
+    ],
+    { now: NOW },
+  );
+  assert.equal(result.active.length, 1);
+  const trip = result.active[0];
+  // Current fare is the cheaper one; the original (higher) fare is surfaced so
+  // the importer can credit the drop as a saving.
+  assert.equal(trip.paidCashUsd, 129.98);
+  assert.equal(trip.originalPaidCashUsd, 200);
+});
+
+test('a change to a higher fare under the same PNR does not surface a saving', () => {
+  const result = svc.fold(
+    [
+      email(
+        'm1',
+        '2026-03-01T00:00:00Z',
+        'Air Reservation Confirmation',
+        'Confirmation # ABC123\n(MDW) to (LAS)\nAug 14, 2026 9:35 AM\nTotal $100.00',
+      ),
+      email(
+        'm2',
+        '2026-04-01T00:00:00Z',
+        'Air Reservation Confirmation',
+        'Confirmation # ABC123\n(MDW) to (LAS)\nAug 14, 2026 9:35 AM\nTotal $150.00',
+      ),
+    ],
+    { now: NOW },
+  );
+  assert.equal(result.active.length, 1);
+  assert.equal(result.active[0].originalPaidCashUsd, undefined);
+});
+
+test('cancelled trips expose their last-known details for cancel-and-rebook matching', () => {
+  const result = svc.fold(
+    [
+      email(
+        'm1',
+        '2026-03-01T00:00:00Z',
+        'Air Reservation Confirmation',
+        'Confirmation # ABC123\n(MDW) to (LAS)\nAug 14, 2026 9:35 AM\nTotal $200.00',
+      ),
+      email('m2', '2026-04-01T00:00:00Z', 'Your reservation has been cancelled', 'Confirmation # ABC123'),
+    ],
+    { now: NOW },
+  );
+  assert.deepEqual(result.cancelledConfirmations, ['ABC123']);
+  assert.equal(result.cancelledTrips.length, 1);
+  assert.equal(result.cancelledTrips[0].confirmationNumber, 'ABC123');
+  assert.equal(result.cancelledTrips[0].paidCashUsd, 200);
+});
+
 test('re-booking under the same PNR after a cancellation revives the trip', () => {
   const result = svc.fold(
     [

@@ -9,6 +9,12 @@ export interface EmailImportResult {
   active: RetrievedTrip[];
   /** Confirmation numbers whose latest event is a cancellation. */
   cancelledConfirmations: string[];
+  /**
+   * Last-known details for cancelled confirmations (route, date, price), when
+   * the emails carried them. Lets the importer match a cancel-and-rebook under
+   * a NEW confirmation number against the cancelled trip to credit a saving.
+   */
+  cancelledTrips: RetrievedTrip[];
   /** Total number of recognized Southwest events parsed. */
   events: number;
   /** Number of distinct confirmation numbers seen. */
@@ -32,6 +38,10 @@ interface FoldState {
   lastEventAt: number;
   /** When the latest booking confirmation arrived (ms since epoch). */
   bookedAt?: number;
+  /** Earliest known paid points for this PNR (the savings baseline). */
+  firstPaidPoints?: number;
+  /** Earliest known paid cash for this PNR (the savings baseline). */
+  firstPaidCashUsd?: number;
 }
 
 /**
@@ -83,25 +93,50 @@ export class EmailTripImportService {
           state.trip = mergeTrip(state.trip, event.trip);
           break;
       }
+      // Remember the EARLIEST price seen for this PNR. Events are sorted
+      // oldest-first, so the first one carrying a price is the original fare;
+      // a later cheaper change/rebook is then recognizable as a saving even
+      // when the original and rebooked emails arrive in the same import.
+      if (state.firstPaidPoints == null && event.trip?.paidPoints != null) {
+        state.firstPaidPoints = event.trip.paidPoints;
+      }
+      if (state.firstPaidCashUsd == null && event.trip?.paidCashUsd != null) {
+        state.firstPaidCashUsd = event.trip.paidCashUsd;
+      }
       state.lastEventAt = event.occurredAt;
       byConfirmation.set(event.confirmationNumber, state);
     }
 
     const active: RetrievedTrip[] = [];
     const cancelledConfirmations: string[] = [];
+    const cancelledTrips: RetrievedTrip[] = [];
     for (const state of byConfirmation.values()) {
       if (state.cancelled) {
         cancelledConfirmations.push(state.confirmationNumber);
+        if (state.trip) {
+          cancelledTrips.push(
+            state.bookedAt != null ? { ...state.trip, bookedAt: state.bookedAt } : state.trip,
+          );
+        }
         continue;
       }
       if (!state.trip) continue;
-      const trip = state.bookedAt != null ? { ...state.trip, bookedAt: state.bookedAt } : state.trip;
+      const trip: RetrievedTrip = state.bookedAt != null ? { ...state.trip, bookedAt: state.bookedAt } : { ...state.trip };
+      // Surface the original (higher) fare when this trip was later changed to a
+      // cheaper price under the same PNR, so the importer can credit the drop.
+      if (state.firstPaidPoints != null && trip.paidPoints != null && trip.paidPoints < state.firstPaidPoints) {
+        trip.originalPaidPoints = state.firstPaidPoints;
+      }
+      if (state.firstPaidCashUsd != null && trip.paidCashUsd != null && trip.paidCashUsd < state.firstPaidCashUsd) {
+        trip.originalPaidCashUsd = state.firstPaidCashUsd;
+      }
       if (isFutureTrip(trip, now, includeUndated)) active.push(trip);
     }
 
     return {
       active,
       cancelledConfirmations,
+      cancelledTrips,
       events: events.length,
       confirmations: byConfirmation.size,
     };
@@ -124,6 +159,8 @@ function mergeTrip(prev: RetrievedTrip | undefined, next: RetrievedTrip | undefi
     purchaseType: next.purchaseType ?? prev.purchaseType,
     paidCashUsd: next.paidCashUsd ?? prev.paidCashUsd,
     paidPoints: next.paidPoints ?? prev.paidPoints,
+    originalPaidPoints: next.originalPaidPoints ?? prev.originalPaidPoints,
+    originalPaidCashUsd: next.originalPaidCashUsd ?? prev.originalPaidCashUsd,
     taxesAndFeesUsd: next.taxesAndFeesUsd ?? prev.taxesAndFeesUsd,
     legs: next.legs ?? prev.legs,
   };
