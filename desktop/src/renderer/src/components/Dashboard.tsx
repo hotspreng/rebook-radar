@@ -16,9 +16,27 @@ import { Button, Card, RecommendationBadge } from './ui.js';
 import { FlightFormModal } from './FlightFormModal.js';
 import { FlightDetailDrawer } from './FlightDetailDrawer.js';
 import { AlternativesPanel, getCheaperAlternatives } from './AlternativesPanel.js';
-import { formatDateTime, formatDuration, formatNative, formatTime, formatUsd } from '../lib/format.js';
+import { formatDate, formatDateTime, formatDuration, formatNative, formatTime, formatUsd } from '../lib/format.js';
 
 const api = window.swr;
+
+/**
+ * The most recent price movement for a flight: the delta (in native units)
+ * between the two latest recorded prices, plus when the prior price was seen.
+ * History only records on a change, so the last two entries always differ.
+ */
+function getPriceTrend(
+  item: FlightWithComparison,
+): { deltaNative: number; sinceIso: string; up: boolean } | undefined {
+  const h = item.priceHistory;
+  if (!h || h.length < 2) return undefined;
+  const last = h[h.length - 1]!;
+  const prev = h[h.length - 2]!;
+  if (last.amount == null || prev.amount == null) return undefined;
+  const delta = last.amount - prev.amount;
+  if (delta === 0) return undefined;
+  return { deltaNative: delta, sinceIso: prev.recordedAt, up: delta > 0 };
+}
 
 export function Dashboard(): JSX.Element {
   const {
@@ -264,6 +282,7 @@ export function Dashboard(): JSX.Element {
                 <th className="px-4 py-3 text-right">Original</th>
                 <th className="px-4 py-3 text-right">Current</th>
                 <th className="px-4 py-3 text-right">Savings</th>
+                <th className="px-4 py-3 text-right">Trend</th>
                 <th className="px-4 py-3">Recommendation</th>
                 <th className="px-4 py-3"></th>
               </tr>
@@ -271,7 +290,7 @@ export function Dashboard(): JSX.Element {
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={10} className="px-4 py-12 text-center text-slate-500">
                     No flights yet. Click “Add flight” to track one, or sync an account.
                   </td>
                 </tr>
@@ -497,6 +516,30 @@ export function Dashboard(): JSX.Element {
                           '—'
                         )}
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        {(() => {
+                          const trend = getPriceTrend(item);
+                          if (!trend) {
+                            return <span className="text-[11px] text-slate-600">—</span>;
+                          }
+                          return (
+                            <div className="flex flex-col items-end">
+                              <span
+                                className={`inline-flex items-center gap-1 ${
+                                  trend.up ? 'text-rose-400' : 'text-emerald-400'
+                                }`}
+                              >
+                                {trend.up ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+                                {trend.up ? '+' : '−'}
+                                {formatNative(Math.abs(trend.deltaNative), type)}
+                              </span>
+                              <span className="mt-0.5 text-[10px] text-slate-500">
+                                since {formatDate(trend.sinceIso)}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="px-4 py-3">
                         {isRoundTrip ? (
                           isFirstLeg ? (
@@ -543,7 +586,7 @@ export function Dashboard(): JSX.Element {
                     {isOpen && canExpand && (
                       <tr className="border-t border-slate-800/60 bg-slate-950/40">
                         <td></td>
-                        <td colSpan={8} className="px-4 py-3">
+                        <td colSpan={9} className="px-4 py-3">
                           <AlternativesPanel
                             alternatives={cheaper}
                             isPoints={isPoints}

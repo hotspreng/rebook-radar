@@ -1,6 +1,6 @@
 import { PurchaseType, Recommendation } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
-import { ArrowRight, RefreshCw, Pencil, Trash2, X } from 'lucide-react';
+import { ArrowRight, RefreshCw, Pencil, Trash2, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { Button, RecommendationBadge } from './ui.js';
 import { AlternativesPanel, getCheaperAlternatives } from './AlternativesPanel.js';
 import { FARE_LABELS, formatDate, formatDateTime, formatDuration, formatNative, formatTime, formatUsd } from '../lib/format.js';
@@ -163,6 +163,48 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
               </p>
             )}
           </section>
+
+          {item.priceHistory && item.priceHistory.length > 0 && (
+            <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+              <h3 className="mb-3 text-sm font-semibold text-slate-200">Price history</h3>
+              <ol className="space-y-2">
+                {[...item.priceHistory].reverse().map((entry, i, arr) => {
+                  const older = arr[i + 1];
+                  const delta =
+                    older?.amount != null && entry.amount != null
+                      ? entry.amount - older.amount
+                      : undefined;
+                  return (
+                    <li
+                      key={`${entry.recordedAt}-${i}`}
+                      className="flex items-center justify-between text-sm"
+                    >
+                      <span className="text-xs text-slate-500">
+                        {formatDateTime(entry.recordedAt)}
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <span className="text-slate-200">{formatNative(entry.amount, type)}</span>
+                        {delta != null && delta !== 0 && (
+                          <span
+                            className={`inline-flex items-center gap-0.5 text-[11px] ${
+                              delta > 0 ? 'text-rose-400' : 'text-emerald-400'
+                            }`}
+                          >
+                            {delta > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                            {delta > 0 ? '+' : '−'}
+                            {formatNative(Math.abs(delta), type)}
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+              <p className="mt-3 text-[11px] text-slate-500">
+                A new entry is recorded each time a price check sees a changed price.
+              </p>
+            </section>
+          )}
 
           {cheaper.length > 0 && (
             <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">

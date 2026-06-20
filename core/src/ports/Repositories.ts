@@ -3,6 +3,7 @@ import { Flight } from '../models/Flight.js';
 import { Passenger } from '../models/Passenger.js';
 import { PriceComparison } from '../models/PriceComparison.js';
 import { PriceQuote } from '../models/PriceQuote.js';
+import { PriceHistoryEntry } from '../models/PriceHistory.js';
 
 /**
  * Persistence "ports" (hexagonal architecture). Core defines WHAT it needs from
@@ -41,6 +42,17 @@ export interface QuoteRepository {
   /** Upsert the latest quote and comparison for a flight. */
   saveLatest(flightId: string, quote: PriceQuote | undefined, comparison: PriceComparison): Promise<void>;
   getLatest(flightId: string): Promise<{ quote?: PriceQuote; comparison?: PriceComparison } | undefined>;
+}
+
+export interface PriceHistoryRepository {
+  /** Append a price observation to a flight's history. */
+  append(entry: PriceHistoryEntry): Promise<void>;
+  /** All observations for a flight, oldest first. */
+  list(flightId: string): Promise<PriceHistoryEntry[]>;
+  /** The most recently recorded observation, if any. */
+  latest(flightId: string): Promise<PriceHistoryEntry | undefined>;
+  /** Remove all history for a flight (used when the flight is deleted). */
+  deleteForFlight(flightId: string): Promise<void>;
 }
 
 /**

@@ -9,6 +9,7 @@ import { SqliteAccountRepository } from './database/repositories/SqliteAccountRe
 import { SqliteFlightRepository } from './database/repositories/SqliteFlightRepository.js';
 import { SqlitePassengerRepository } from './database/repositories/SqlitePassengerRepository.js';
 import { SqliteQuoteRepository } from './database/repositories/SqliteQuoteRepository.js';
+import { SqlitePriceHistoryRepository } from './database/repositories/SqlitePriceHistoryRepository.js';
 import { SafeStorageSecretStore } from './security/SafeStorageSecretStore.js';
 import { AppService } from './services/AppService.js';
 import { SettingsStore } from './services/SettingsStore.js';
@@ -43,6 +44,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
   const accounts = new SqliteAccountRepository();
   const flights = new SqliteFlightRepository();
   const quotes = new SqliteQuoteRepository();
+  const priceHistory = new SqlitePriceHistoryRepository();
   const secrets = new SafeStorageSecretStore();
   const notifier = new Notifier();
 
@@ -63,6 +65,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
     accounts,
     flights,
     quotes,
+    priceHistory,
     secrets,
     debugDir,
     scraperProfileDir,

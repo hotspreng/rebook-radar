@@ -63,6 +63,19 @@ CREATE TABLE IF NOT EXISTS quotes (
   updated_at TEXT NOT NULL
 );
 
+-- Time series of observed prices per flight. One row is appended each time a
+-- price check sees a price that differs from the previous recorded one.
+CREATE TABLE IF NOT EXISTS price_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  flight_id TEXT NOT NULL,
+  recorded_at TEXT NOT NULL,
+  purchase_type TEXT NOT NULL,
+  amount REAL,
+  cash_usd REAL,
+  points INTEGER,
+  value_usd REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -70,6 +83,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 CREATE INDEX IF NOT EXISTS idx_flights_passenger ON flights(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_flights_account ON flights(account_id);
+CREATE INDEX IF NOT EXISTS idx_price_history_flight ON price_history(flight_id, recorded_at);
 `;
 
 /**

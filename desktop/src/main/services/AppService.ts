@@ -26,6 +26,9 @@ import {
   type Passenger,
   type PassengerRepository,
   type PriceCheckOptions,
+  type PriceComparison,
+  type PriceHistoryEntry,
+  type PriceHistoryRepository,
   type QuoteRepository,
   type RetrievedTrip,
   type SecretStore,
@@ -128,6 +131,7 @@ export interface AppServiceDeps {
   accounts: AccountRepository;
   flights: FlightRepository;
   quotes: QuoteRepository;
+  priceHistory: PriceHistoryRepository;
   secrets: SecretStore;
   /** Directory where the scraper writes debug screenshots/HTML. */
   debugDir: string;
@@ -575,8 +579,9 @@ export class AppService {
     return this.deps.flights.update({ ...flight, updatedAt: new Date().toISOString() });
   }
 
-  deleteFlight(id: string): Promise<void> {
-    return this.deps.flights.delete(id);
+  async deleteFlight(id: string): Promise<void> {
+    await this.deps.priceHistory.deleteForFlight(id);
+    await this.deps.flights.delete(id);
   }
 
   // --- Pricing -------------------------------------------------------------
@@ -588,6 +593,7 @@ export class AppService {
     const options = this.comparisonOptions();
     const result = await this.priceCheck.check(flight, provider, undefined, options);
     await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
+    await this.recordPriceHistory(flight.id, result.quote, result.comparison);
     return this.toFlightWithComparison(flight, result.quote, result.comparison);
   }
 
@@ -601,6 +607,7 @@ export class AppService {
       try {
         const result = await this.priceCheck.check(flight, provider, undefined, options);
         await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
+        await this.recordPriceHistory(flight.id, result.quote, result.comparison);
         out.push(await this.toFlightWithComparison(flight, result.quote, result.comparison));
       } catch (err) {
         log.warn('Price check failed for flight', { flightId: flight.id, error: String(err) });
@@ -837,13 +844,46 @@ export class AppService {
       quote = quote ?? latest?.quote;
       comparison = latest?.comparison;
     }
+    const priceHistory = await this.deps.priceHistory.list(flight.id);
     return {
       flight,
       passengerName: passenger?.fullName ?? 'Unknown',
       accountLabel: account?.label,
       quote,
       comparison,
+      priceHistory,
     };
+  }
+
+  /**
+   * Append a price observation to the flight's history, but only when the
+   * current price differs from the last recorded one. This keeps the series to
+   * actual price movements (so the dashboard trend and detail history show
+   * meaningful changes rather than a row per check).
+   */
+  private async recordPriceHistory(
+    flightId: string,
+    quote: FlightWithComparison['quote'],
+    comparison: PriceComparison,
+  ): Promise<void> {
+    const amount = comparison.currentAmount;
+    // No current price (no matching fare found) → nothing to record.
+    if (amount == null || !Number.isFinite(amount)) return;
+
+    const prev = await this.deps.priceHistory.latest(flightId);
+    // Skip when unchanged (compare to cents/whole-point precision).
+    if (prev?.amount != null && Math.round(prev.amount * 100) === Math.round(amount * 100)) return;
+
+    const entry: PriceHistoryEntry = {
+      flightId,
+      recordedAt: comparison.computedAt ?? new Date().toISOString(),
+      purchaseType: comparison.originalPurchaseType,
+      amount,
+      cashUsd: quote?.cashUsd,
+      points: quote?.points,
+      valueUsd: comparison.currentValueUsd,
+    };
+    await this.deps.priceHistory.append(entry);
   }
 
   private matchPassenger(

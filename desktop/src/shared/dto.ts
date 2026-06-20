@@ -6,6 +6,7 @@ import type {
   NewPassenger,
   Passenger,
   PriceComparison,
+  PriceHistoryEntry,
   PriceQuote,
 } from '@swr/core';
 
@@ -118,6 +119,8 @@ export interface FlightWithComparison {
   accountLabel?: string;
   quote?: PriceQuote;
   comparison?: PriceComparison;
+  /** Recorded price observations over time, oldest first. */
+  priceHistory?: PriceHistoryEntry[];
 }
 
 export interface MonitorStatus {
