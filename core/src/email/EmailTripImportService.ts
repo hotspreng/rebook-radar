@@ -115,11 +115,13 @@ function mergeTrip(prev: RetrievedTrip | undefined, next: RetrievedTrip | undefi
     destination: next.destination || prev.destination,
     departureDateTime: next.departureDateTime || prev.departureDateTime,
     arrivalDateTime: next.arrivalDateTime ?? prev.arrivalDateTime,
+    durationMinutes: next.durationMinutes ?? prev.durationMinutes,
     fareType: next.fareType || prev.fareType,
     purchaseType: next.purchaseType ?? prev.purchaseType,
     paidCashUsd: next.paidCashUsd ?? prev.paidCashUsd,
     paidPoints: next.paidPoints ?? prev.paidPoints,
     taxesAndFeesUsd: next.taxesAndFeesUsd ?? prev.taxesAndFeesUsd,
+    legs: next.legs ?? prev.legs,
   };
 }
 

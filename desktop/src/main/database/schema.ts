@@ -31,11 +31,14 @@ CREATE TABLE IF NOT EXISTS flights (
   dest_name TEXT,
   departure_dt TEXT NOT NULL,
   arrival_dt TEXT,
+  duration_minutes INTEGER,
   fare_type TEXT NOT NULL,
   purchase_type TEXT NOT NULL,
   cash_usd REAL,
   points INTEGER,
   taxes_fees_usd REAL NOT NULL DEFAULT 0,
+  segments_json TEXT,
+  payments_json TEXT,
   booking_date TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'manual',
   notes TEXT,
@@ -68,3 +71,14 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE INDEX IF NOT EXISTS idx_flights_passenger ON flights(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_flights_account ON flights(account_id);
 `;
+
+/**
+ * Idempotent column additions for databases created before a column existed.
+ * sql.js has no ALTER … IF NOT EXISTS, so each statement is wrapped where the
+ * caller swallows the "duplicate column" error.
+ */
+export const MIGRATIONS: { table: string; column: string; ddl: string }[] = [
+  { table: 'flights', column: 'duration_minutes', ddl: 'ALTER TABLE flights ADD COLUMN duration_minutes INTEGER' },
+  { table: 'flights', column: 'segments_json', ddl: 'ALTER TABLE flights ADD COLUMN segments_json TEXT' },
+  { table: 'flights', column: 'payments_json', ddl: 'ALTER TABLE flights ADD COLUMN payments_json TEXT' },
+];

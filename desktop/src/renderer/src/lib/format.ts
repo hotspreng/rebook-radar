@@ -34,6 +34,24 @@ export function formatDate(iso: string | undefined): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/** Time-of-day only, e.g. "7:30 PM". */
+export function formatTime(iso: string | undefined): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+/** Total travel time in minutes as "2h 15m". */
+export function formatDuration(minutes: number | undefined): string {
+  if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) return '—';
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 /** Format an amount in the unit of the original purchase. */
 export function formatNative(amount: number | undefined, type: PurchaseType): string {
   if (amount == null) return '—';

@@ -121,6 +121,8 @@ export class PriceCheckService {
       pointsEstimated: result.pointsEstimated,
       pointsTaxesAndFeesUsd: result.pointsTaxesAndFeesUsd,
       departureDateTime: result.departureDateTime,
+      arrivalDateTime: result.arrivalDateTime,
+      durationMinutes: result.durationMinutes,
       fetchedAt: new Date().toISOString(),
       providerId,
       preferredPurchaseType: flight.originalCost.purchaseType,
@@ -154,12 +156,14 @@ export class PriceCheckService {
       .map((r) => ({
         flightNumber: r.flightNumber,
         departureDateTime: r.departureDateTime,
+        arrivalDateTime: r.arrivalDateTime,
         fareType: r.fareType ?? FareType.Unknown,
         cashUsd: r.cashUsd,
         points: r.points,
         pointsEstimated: r.pointsEstimated,
         pointsTaxesAndFeesUsd: r.pointsTaxesAndFeesUsd,
         stops: r.stops,
+        durationMinutes: r.durationMinutes,
       }))
       .sort((a, b) => {
         const pa = (isPoints ? a.points : a.cashUsd) ?? Number.MAX_SAFE_INTEGER;

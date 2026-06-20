@@ -191,13 +191,26 @@ export class GmailMessageSource implements EmailMessageSource {
       pageToken = data.nextPageToken;
     } while (pageToken && ids.length < cap);
 
+    const capped = ids.slice(0, cap);
+    this.log.info('Listed Gmail messages', { matched: ids.length, fetching: capped.length });
+
+    // Fetch message bodies in parallel batches (Gmail per-user rate limits are
+    // generous; sequential GETs made a 400-email import take minutes).
+    const BATCH = 20;
     const messages: EmailMessage[] = [];
-    for (const id of ids.slice(0, cap)) {
-      const { data } = await client.request<GmailGetResponse>({
-        url: `${GMAIL_API}/messages/${id}`,
-        params: { format: 'full' },
-      });
-      messages.push(this.toEmailMessage(data));
+    for (let i = 0; i < capped.length; i += BATCH) {
+      const batch = capped.slice(i, i + BATCH);
+      const fetched = await Promise.all(
+        batch.map(async (id) => {
+          const { data } = await client.request<GmailGetResponse>({
+            url: `${GMAIL_API}/messages/${id}`,
+            params: { format: 'full' },
+          });
+          return this.toEmailMessage(data);
+        }),
+      );
+      messages.push(...fetched);
+      this.log.info('Fetching Gmail bodies', { done: messages.length, total: capped.length });
     }
     this.log.info('Fetched Gmail messages', { count: messages.length });
     return messages;

@@ -9,6 +9,11 @@ out/
 build/
 *.tsbuildinfo
 
+# Keep the app icon (electron-builder buildResources) despite build/ being ignored
+!desktop/build/
+desktop/build/*
+!desktop/build/icon.ico
+
 # Electron
 release/
 desktop/out/

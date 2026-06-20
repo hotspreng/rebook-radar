@@ -26,12 +26,14 @@ export const IPC = {
   // Pricing
   priceCheckOne: 'price:checkOne',
   priceCheckAll: 'price:checkAll',
+  priceRecompute: 'price:recompute',
 
   // Settings
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   settingsWarmScraperProfile: 'settings:warmScraperProfile',
   settingsSetSerpApiKey: 'settings:setSerpApiKey',
+  settingsSerpApiUsage: 'settings:serpApiUsage',
 
   // Gmail email import
   emailStatus: 'email:status',

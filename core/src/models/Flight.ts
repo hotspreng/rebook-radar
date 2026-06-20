@@ -21,6 +21,23 @@ export interface Route {
 }
 
 /**
+ * One operated segment within a single direction of travel.
+ *
+ * A direction with a connection (e.g. MDW → ATL → MSY) is made up of multiple
+ * segments. A non-stop direction has a single segment matching the route.
+ */
+export interface FlightSegment {
+  origin: Airport;
+  destination: Airport;
+  /** Departure date/time in the segment origin's local time zone (ISO-8601). */
+  departureDateTime: IsoDateTime;
+  /** Arrival date/time at the segment destination, when known. */
+  arrivalDateTime?: IsoDateTime;
+  /** Marketing flight number, e.g. "WN 2886". */
+  flightNumber?: string;
+}
+
+/**
  * A tracked Southwest flight (one direction of travel).
  *
  * A round trip is represented as two `Flight` records sharing a confirmation
@@ -40,6 +57,11 @@ export interface Flight {
   departureDateTime: IsoDateTime;
   /** Arrival date/time, when known. */
   arrivalDateTime?: IsoDateTime;
+  /** Total scheduled travel time in minutes, when known. */
+  durationMinutes?: number;
+
+  /** Operated segments for this direction (present when there is a connection). */
+  segments?: FlightSegment[];
 
   fareType: FareType;
 

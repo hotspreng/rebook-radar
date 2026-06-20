@@ -11,6 +11,12 @@ import type {
 
 /** User-facing settings persisted in the local DB. */
 export interface AppSettings {
+  /**
+   * Cents per Rapid Rewards point. Used both to ESTIMATE Southwest award points
+   * from a cash fare (e.g. SerpApi only carries cash) and to value points ↔
+   * dollars in the savings comparison. Southwest's effective award rate runs
+   * ~1.1–1.4¢; tune to match observed award prices.
+   */
   pointValueCents: number;
   pollIntervalMinutes: number;
   savingsAlertThresholdUsd: number;
@@ -32,8 +38,12 @@ export interface AppSettings {
    *     estimate points (Southwest award pricing isn't published to third parties).
    */
   fareSource: 'scraper' | 'serpapi';
-  /** Whether a SerpApi key is stored (mirrors secure-store state). */
-  serpApiConfigured: boolean;
+  /**
+   * Which SerpApi key slots have a key stored (mirrors secure-store state).
+   * Up to 3 keys; the provider rotates to the next when one runs out of free
+   * monthly searches. Index 0 is the primary key.
+   */
+  serpApiKeys: boolean[];
   debugMode: boolean;
   /** Google OAuth Client ID for Gmail import (not secret; stored in settings). */
   gmailClientId: string;
@@ -49,6 +59,20 @@ export interface AppSettings {
 export interface GmailCredentialsInput {
   clientId: string;
   clientSecret: string;
+}
+
+/** Monthly SerpApi quota usage for one configured key slot. */
+export interface SerpApiKeyUsage {
+  /** 0-based key slot (0 = primary). */
+  slot: number;
+  /** Searches used this month, if known. */
+  thisMonthUsage?: number;
+  /** Plan's monthly search allowance, if known. */
+  searchesPerMonth?: number;
+  /** Plan searches remaining this month, if known. */
+  totalSearchesLeft?: number;
+  /** Set when the usage lookup failed (e.g. invalid key, offline). */
+  error?: string;
 }
 
 /** Gmail connection status shown in the UI. */

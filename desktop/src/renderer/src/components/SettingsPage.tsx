@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, EmailImportResult, EmailStatus } from '@shared/dto';
+import type { AppSettings, EmailImportResult, EmailStatus, SerpApiKeyUsage } from '@shared/dto';
 import { Activity, Mail, Plug, RefreshCw, Save } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore.js';
 import { Button, Card, Field, inputClass } from './ui.js';
@@ -63,15 +63,13 @@ export function SettingsPage(): JSX.Element {
         <Card className="px-6 py-5">
           <h2 className="mb-4 text-sm font-semibold text-slate-200">Points valuation</h2>
           <div className="grid grid-cols-3 gap-4">
-            <Field label="Cents per point" hint="Typical range 1.3–1.5¢.">
-              <input
-                type="number"
-                step="0.05"
-                min="1"
-                max="2"
-                className={inputClass}
+            <Field
+              label="Cents per point"
+              hint="Used to estimate award points from a cash fare AND to value points savings. Tune to match Southwest's award prices (≈1.1–1.4¢)."
+            >
+              <AwardRateInput
                 value={draft.pointValueCents}
-                onChange={(e) => set('pointValueCents', Number(e.target.value))}
+                onCommit={(v) => setPersist('pointValueCents', v)}
               />
             </Field>
           </div>
@@ -158,9 +156,9 @@ export function SettingsPage(): JSX.Element {
             </select>
           </label>
           {draft.fareSource === 'serpapi' && (
-            <div className="mt-4">
+            <div className="mt-4 space-y-4">
               <SerpApiKeyEditor
-                configured={draft.serpApiConfigured}
+                slots={draft.serpApiKeys}
                 onSaved={(next) => setDraft(next)}
               />
             </div>
@@ -274,11 +272,167 @@ function Toggle({
   );
 }
 
+/**
+ * Number input for the award estimation rate that uses LOCAL STRING state so
+ * the user can type decimals (e.g. "1.17") without the value being coerced to a
+ * number on every keystroke (which drops the trailing "." and decimals). The
+ * parsed value is committed on change (when valid) and normalized on blur.
+ */
+function AwardRateInput({
+  value,
+  onCommit,
+}: {
+  value: number;
+  onCommit: (v: number) => void;
+}): JSX.Element {
+  const [text, setText] = useState(String(value));
+
+  // Reflect external changes (e.g. settings reload) when not mid-edit.
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  function commit(raw: string): void {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0.5 && n <= 3) onCommit(n);
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className={inputClass}
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        commit(e.target.value);
+      }}
+      onBlur={(e) => {
+        const n = Number(e.target.value);
+        const next = Number.isFinite(n) ? Math.min(Math.max(n, 0.5), 3) : value;
+        setText(String(next));
+        onCommit(next);
+      }}
+    />
+  );
+}
+
 function SerpApiKeyEditor({
-  configured,
+  slots,
   onSaved,
 }: {
+  slots: boolean[];
+  onSaved: (next: AppSettings) => void;
+}): JSX.Element {
+  // Show the primary slot plus any already-configured backups plus the next
+  // empty slot (so backups appear progressively, up to a max of 3).
+  const configuredCount = slots.filter(Boolean).length;
+  const visibleCount = Math.min(3, Math.max(1, configuredCount + 1));
+
+  const labels = ['Primary key', 'Backup key 1', 'Backup key 2'];
+
+  const [usage, setUsage] = useState<SerpApiKeyUsage[] | null>(null);
+  const [loadingUsage, setLoadingUsage] = useState(false);
+
+  async function reloadUsage(): Promise<void> {
+    setLoadingUsage(true);
+    try {
+      setUsage(await api.settings.serpApiUsage());
+    } catch {
+      setUsage([]);
+    } finally {
+      setLoadingUsage(false);
+    }
+  }
+
+  // Refresh usage whenever the set of configured keys changes (and on mount).
+  useEffect(() => {
+    if (configuredCount > 0) void reloadUsage();
+    else setUsage([]);
+  }, [configuredCount]);
+
+  return (
+    <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+      <p className="text-xs leading-relaxed text-slate-400">
+        Get a free key at{' '}
+        <button
+          type="button"
+          className="text-brand-400 underline"
+          onClick={() => void api.openExternal('https://serpapi.com/manage-api-key')}
+        >
+          serpapi.com
+        </button>{' '}
+        (250 searches/month free per account). Add up to 3 keys — the app
+        automatically rotates to the next one when a key runs out of free monthly
+        searches. Stored encrypted with Windows DPAPI; never leaves this computer
+        except in requests to SerpApi.
+      </p>
+      {configuredCount > 0 && (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50"
+          onClick={() => void reloadUsage()}
+          disabled={loadingUsage}
+        >
+          <RefreshCw size={12} className={loadingUsage ? 'animate-spin' : ''} />
+          {loadingUsage ? 'Checking usage…' : 'Refresh usage'}
+        </button>
+      )}
+      {Array.from({ length: visibleCount }, (_, slot) => (
+        <SerpApiKeySlot
+          key={slot}
+          slot={slot}
+          label={labels[slot] ?? `Key ${slot + 1}`}
+          configured={slots[slot] ?? false}
+          usage={usage?.find((u) => u.slot === slot)}
+          onSaved={onSaved}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SerpApiUsageLine({ usage }: { usage?: SerpApiKeyUsage }): JSX.Element | null {
+  if (!usage) return null;
+  if (usage.error) {
+    return <span className="text-xs text-amber-400">Usage unavailable: {usage.error}</span>;
+  }
+  const used = usage.thisMonthUsage;
+  const total = usage.searchesPerMonth;
+  if (used == null) return null;
+  const left = usage.totalSearchesLeft;
+  const pct = total && total > 0 ? Math.min(100, Math.round((used / total) * 100)) : null;
+  const low = left != null && left <= 25;
+  return (
+    <div className="space-y-1">
+      <span className={`text-xs ${low ? 'text-amber-400' : 'text-slate-400'}`}>
+        {used.toLocaleString()}
+        {total != null ? ` / ${total.toLocaleString()}` : ''} searches used this month
+        {left != null ? ` · ${left.toLocaleString()} left` : ''}
+      </span>
+      {pct != null && (
+        <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-slate-800">
+          <div
+            className={`h-full rounded-full ${low ? 'bg-amber-500' : 'bg-brand-500'}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SerpApiKeySlot({
+  slot,
+  label,
+  configured,
+  usage,
+  onSaved,
+}: {
+  slot: number;
+  label: string;
   configured: boolean;
+  usage?: SerpApiKeyUsage;
   onSaved: (next: AppSettings) => void;
 }): JSX.Element {
   const { pushToast } = useAppStore();
@@ -292,7 +446,7 @@ function SerpApiKeyEditor({
     }
     setBusy(true);
     try {
-      const next = await api.settings.setSerpApiKey(remove ? '' : key);
+      const next = await api.settings.setSerpApiKey(slot, remove ? '' : key);
       useAppStore.setState({ settings: next });
       onSaved(next);
       setKey('');
@@ -305,21 +459,9 @@ function SerpApiKeyEditor({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/40 p-4">
-      <p className="text-xs leading-relaxed text-slate-400">
-        Get a free key at{' '}
-        <button
-          type="button"
-          className="text-brand-400 underline"
-          onClick={() => void api.openExternal('https://serpapi.com/manage-api-key')}
-        >
-          serpapi.com
-        </button>{' '}
-        (100 searches/month free). Stored encrypted with Windows DPAPI; never leaves this computer
-        except in requests to SerpApi.
-      </p>
+    <div className="space-y-2 border-t border-slate-800/70 pt-3 first:border-t-0 first:pt-0">
       <Field
-        label="SerpApi key"
+        label={label}
         hint={configured ? 'A key is saved. Paste a new one to replace it.' : 'Encrypted at rest.'}
       >
         <input
@@ -344,6 +486,7 @@ function SerpApiKeyEditor({
           {configured ? 'Key saved' : 'No key yet'}
         </span>
       </div>
+      {configured && <SerpApiUsageLine usage={usage} />}
     </div>
   );
 }

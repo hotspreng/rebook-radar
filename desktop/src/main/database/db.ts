@@ -2,7 +2,7 @@ import initSqlJs, { type Database } from 'sql.js';
 import { app } from 'electron';
 import { join } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { SCHEMA_SQL } from './schema.js';
+import { MIGRATIONS, SCHEMA_SQL } from './schema.js';
 
 let db: Database | null = null;
 let dbPath = '';
@@ -19,8 +19,26 @@ export async function initDatabase(): Promise<Database> {
 
   db.run('PRAGMA foreign_keys = ON;');
   db.run(SCHEMA_SQL);
+  runMigrations(db);
   saveDatabase();
   return db;
+}
+
+/** Add columns missing from databases created before they were introduced. */
+function runMigrations(database: Database): void {
+  const existing = (table: string): Set<string> => {
+    const cols = new Set<string>();
+    const stmt = database.prepare(`PRAGMA table_info(${table})`);
+    try {
+      while (stmt.step()) cols.add((stmt.getAsObject() as { name: string }).name);
+    } finally {
+      stmt.free();
+    }
+    return cols;
+  };
+  for (const m of MIGRATIONS) {
+    if (!existing(m.table).has(m.column)) database.run(m.ddl);
+  }
 }
 
 function getDbPath(): string {

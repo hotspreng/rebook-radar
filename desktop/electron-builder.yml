@@ -9,6 +9,7 @@ files:
 asarUnpack:
   - "**/node_modules/sql.js/dist/*.wasm"
 win:
+  icon: build/icon.ico
   target:
     - nsis
   artifactName: ${productName}-${version}-setup.${ext}

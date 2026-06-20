@@ -19,7 +19,7 @@ export class SettingsStore {
       scraperHeadful: this.defaults.scraperHeadful,
       scraperBrowserChannel: 'chrome',
       fareSource: 'serpapi',
-      serpApiConfigured: false,
+      serpApiKeys: [false, false, false],
       debugMode: this.defaults.debugMode,
       gmailClientId: '',
       gmailConnected: false,
@@ -35,7 +35,12 @@ export class SettingsStore {
       this.save(defaults);
       return defaults;
     }
-    return { ...this.defaultSettings(), ...(JSON.parse(row.value) as Partial<AppSettings>) };
+    const parsed = JSON.parse(row.value) as Partial<AppSettings> & { serpApiConfigured?: boolean };
+    // Migrate the legacy single-key flag into the 3-slot array (slot 0 = legacy key).
+    if (!Array.isArray(parsed.serpApiKeys) && typeof parsed.serpApiConfigured === 'boolean') {
+      parsed.serpApiKeys = [parsed.serpApiConfigured, false, false];
+    }
+    return { ...this.defaultSettings(), ...parsed };
   }
 
   update(partial: Partial<AppSettings>): AppSettings {

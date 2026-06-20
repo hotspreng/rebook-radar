@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import { join } from 'node:path';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import { logger } from '@swr/core';
+import appIcon from '../../resources/icon.png?asset';
 import { loadAppConfig } from './config.js';
 import { closeDatabase, initDatabase } from './database/db.js';
 import { buildContainer, type AppContainer } from './container.js';
@@ -22,6 +23,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     title: 'Southwest Rebooker',
+    icon: appIcon,
     backgroundColor: '#0f172a',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

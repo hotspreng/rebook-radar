@@ -11,6 +11,7 @@ import type {
   GmailCredentialsInput,
   MonitorStatus,
   PriceUpdateEvent,
+  SerpApiKeyUsage,
   SetPasswordInput,
 } from '../shared/dto.js';
 import type {
@@ -59,13 +60,16 @@ const api: SwrApi = {
   pricing: {
     checkOne: (flightId: string) => invoke<FlightWithComparison>(IPC.priceCheckOne, flightId),
     checkAll: () => invoke<{ checked: number; rebookCount: number }>(IPC.priceCheckAll),
+    recomputeEstimates: () => invoke<FlightWithComparison[]>(IPC.priceRecompute),
   },
   settings: {
     get: () => invoke<AppSettings>(IPC.settingsGet),
     update: (settings: Partial<AppSettings>) => invoke<AppSettings>(IPC.settingsUpdate, settings),
     warmScraperProfile: () =>
       invoke<{ warmed: boolean }>(IPC.settingsWarmScraperProfile),
-    setSerpApiKey: (key: string) => invoke<AppSettings>(IPC.settingsSetSerpApiKey, key),
+    setSerpApiKey: (slot: number, key: string) =>
+      invoke<AppSettings>(IPC.settingsSetSerpApiKey, { slot, key }),
+    serpApiUsage: () => invoke<SerpApiKeyUsage[]>(IPC.settingsSerpApiUsage),
   },
   email: {
     status: () => invoke<EmailStatus>(IPC.emailStatus),

@@ -53,6 +53,7 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
     const rebookCount = results.filter((r) => r.comparison?.recommendation === 'rebook').length;
     return { checked: results.length, rebookCount };
   });
+  handle(IPC.priceRecompute, () => service.recomputeEstimates());
 
   // Settings
   handle(IPC.settingsGet, () => service.getSettings());
@@ -64,7 +65,10 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
     return next;
   });
   handle(IPC.settingsWarmScraperProfile, () => service.warmScraperProfile());
-  handle<string>(IPC.settingsSetSerpApiKey, (key) => service.setSerpApiKey(key));
+  handle<{ slot: number; key: string }>(IPC.settingsSetSerpApiKey, ({ slot, key }) =>
+    service.setSerpApiKey(slot, key),
+  );
+  handle(IPC.settingsSerpApiUsage, () => service.getSerpApiUsage());
 
   // Gmail email import
   handle(IPC.emailStatus, () => service.getEmailStatus());

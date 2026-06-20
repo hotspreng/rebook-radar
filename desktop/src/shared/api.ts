@@ -16,6 +16,7 @@ import type {
   GmailCredentialsInput,
   MonitorStatus,
   PriceUpdateEvent,
+  SerpApiKeyUsage,
   SetPasswordInput,
 } from './dto.js';
 
@@ -59,12 +60,14 @@ export interface SwrApi {
   pricing: {
     checkOne(flightId: string): Promise<FlightWithComparison>;
     checkAll(): Promise<{ checked: number; rebookCount: number }>;
+    recomputeEstimates(): Promise<FlightWithComparison[]>;
   };
   settings: {
     get(): Promise<AppSettings>;
     update(settings: Partial<AppSettings>): Promise<AppSettings>;
     warmScraperProfile(): Promise<{ warmed: boolean }>;
-    setSerpApiKey(key: string): Promise<AppSettings>;
+    setSerpApiKey(slot: number, key: string): Promise<AppSettings>;
+    serpApiUsage(): Promise<SerpApiKeyUsage[]>;
   };
   email: {
     status(): Promise<EmailStatus>;

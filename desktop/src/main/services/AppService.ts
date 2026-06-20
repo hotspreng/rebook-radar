@@ -5,8 +5,11 @@ import {
   FlightSource,
   GoogleFlightsSerpApiProvider,
   PriceCheckService,
+  PricingComparisonService,
   SouthwestProvider,
+  estimatePointsFromCash,
   exportFlightsToCsv,
+  fetchSerpApiUsage,
   generateId,
   isAirlineError,
   type Account,
@@ -16,6 +19,7 @@ import {
   type ExportRow,
   type Flight,
   type FlightRepository,
+  type FlightSegment,
   type NewAccount,
   type NewFlight,
   type NewPassenger,
@@ -27,7 +31,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { PlaywrightSouthwestClient } from '../scraping/PlaywrightSouthwestClient.js';
 import { GmailMessageSource } from '../email/GmailMessageSource.js';
@@ -37,8 +41,85 @@ import { join } from 'node:path';
 
 const log = logger.child('app-service');
 
-/** Secret-store account name under which the SerpApi key is encrypted. */
-const SERPAPI_SECRET_ACCOUNT = 'serpapi';
+/**
+ * Secret-store account names under which each SerpApi key is encrypted, in
+ * priority order. Slot 0 keeps the legacy 'serpapi' account so existing keys
+ * keep working. The provider rotates through these when one runs out of searches.
+ */
+const SERPAPI_SECRET_ACCOUNTS = ['serpapi', 'serpapi-2', 'serpapi-3'] as const;
+
+/**
+ * Whether an email-parsed passenger name refers to the same person as a stored
+ * passenger. Matches on first + last token so middle names that Southwest
+ * sometimes omits ("Emily Sprenger" vs "Emily Jean Sprenger") still match,
+ * while a different first name on a shared surname ("Amy ... Sprenger") does
+ * not. Falls back to exact full-name equality.
+ */
+function passengerNameMatches(emailName: string, storedFullName: string): boolean {
+  const a = emailName.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const b = storedFullName.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (a.length === 0 || b.length === 0) return false;
+  if (a.join(' ') === b.join(' ')) return true;
+  if (a.length < 2 || b.length < 2) return false;
+  return a[0] === b[0] && a[a.length - 1] === b[b.length - 1];
+}
+
+/** Stable identity for a single flight leg: PNR + route + departure date. */
+function flightLegKey(
+  confirmationNumber: string,
+  origin: string,
+  destination: string,
+  departureDateTime: string,
+): string {
+  return [
+    confirmationNumber.toUpperCase(),
+    origin.toUpperCase(),
+    destination.toUpperCase(),
+    departureDateTime.slice(0, 10),
+  ].join('|');
+}
+
+/**
+ * Expand a retrieved trip into one {@link RetrievedTrip} per flown leg.
+ *
+ * A round-trip confirmation carries a `legs` array (outbound + return). Each
+ * leg becomes its own tracked flight sharing the confirmation number, with the
+ * paid points/cash and taxes split evenly across the legs (Southwest prices and
+ * refunds each direction separately). Single-leg trips pass through unchanged.
+ */
+function expandTripLegs(trip: RetrievedTrip): RetrievedTrip[] {
+  if (!trip.legs || trip.legs.length <= 1) return [trip];
+
+  const count = trip.legs.length;
+  const splitEven = (total: number | undefined): number | undefined =>
+    total == null ? undefined : Math.round(total / count);
+
+  return trip.legs.map((leg) => ({
+    ...trip,
+    origin: leg.origin,
+    destination: leg.destination,
+    departureDateTime: leg.departureDateTime,
+    arrivalDateTime: leg.arrivalDateTime,
+    durationMinutes: leg.durationMinutes,
+    segments: leg.segments,
+    paidPoints: splitEven(trip.paidPoints),
+    paidCashUsd: splitEven(trip.paidCashUsd),
+    taxesAndFeesUsd: splitEven(trip.taxesAndFeesUsd),
+    legs: undefined,
+  }));
+}
+
+/** Map retrieved (string-coded) segments onto stored {@link FlightSegment}s. */
+function toFlightSegments(trip: RetrievedTrip): FlightSegment[] | undefined {
+  if (!trip.segments || trip.segments.length === 0) return undefined;
+  return trip.segments.map((s) => ({
+    origin: { code: s.origin, name: s.originName },
+    destination: { code: s.destination, name: s.destinationName },
+    departureDateTime: s.departureDateTime,
+    arrivalDateTime: s.arrivalDateTime,
+    flightNumber: s.flightNumber,
+  }));
+}
 
 export interface AppServiceDeps {
   config: AppConfig;
@@ -65,6 +146,7 @@ export interface AppServiceDeps {
  */
 export class AppService {
   private readonly priceCheck = new PriceCheckService();
+  private readonly pricing = new PricingComparisonService();
 
   constructor(private readonly deps: AppServiceDeps) {}
 
@@ -265,16 +347,43 @@ export class AppService {
       throw new Error('Gmail is not connected. Connect your account in Settings first.');
     }
 
-    const messages = await source.fetchMessages({
-      query: 'from:southwest.com newer_than:12m',
-      maxResults: 400,
-    });
+    // Transactional confirmations/changes/cancellations come ONLY from
+    // southwestairlines@ifly.southwest.com. Anchoring on that sender keeps
+    // marketing mail out entirely so we never manufacture phantom trips.
+    const primaryQuery = 'from:southwestairlines@ifly.southwest.com newer_than:13m';
+
+    let messages = await source.fetchMessages({ query: primaryQuery, maxResults: 500 });
+    if (messages.length === 0) {
+      log.info('Transactional sender query found nothing — retrying broad sender');
+      messages = await source.fetchMessages({
+        query: 'from:southwest.com newer_than:13m',
+        maxResults: 500,
+      });
+    }
+
     const folded = new EmailTripImportService().fold(messages, { now: new Date() });
+    log.info('Parsed Gmail trip emails', {
+      scanned: messages.length,
+      events: folded.events,
+      confirmations: folded.confirmations,
+      activeTrips: folded.active.length,
+      cancelled: folded.cancelledConfirmations.length,
+      activeConfirmations: folded.active.map((t) => t.confirmationNumber),
+    });
 
     const passengers = await this.deps.passengers.list();
     const existing = await this.deps.flights.list();
-    const byConfirmation = new Map<string, Flight>();
-    for (const f of existing) byConfirmation.set(f.confirmationNumber.toUpperCase(), f);
+    // Round trips share one PNR across multiple flights, so match on the full
+    // leg identity (PNR + route + departure date), not the PNR alone.
+    const byLegKey = new Map<string, Flight>();
+    const byConfirmation = new Map<string, Flight[]>();
+    for (const f of existing) {
+      byLegKey.set(flightLegKey(f.confirmationNumber, f.route.origin.code, f.route.destination.code, f.departureDateTime), f);
+      const pnr = f.confirmationNumber.toUpperCase();
+      const list = byConfirmation.get(pnr) ?? [];
+      list.push(f);
+      byConfirmation.set(pnr, list);
+    }
 
     let imported = 0;
     let updated = 0;
@@ -282,30 +391,46 @@ export class AppService {
     let skipped = 0;
 
     for (const trip of folded.active) {
-      const passengerId = this.matchPassengerByName(passengers, trip.passengerNames);
+      const passengerId = await this.resolvePassengerForImport(passengers, trip.passengerNames);
       if (!passengerId) {
+        log.info('Skipped trip — no passenger name in email', {
+          confirmation: trip.confirmationNumber,
+          names: trip.passengerNames,
+        });
         skipped += 1;
         continue;
       }
-      const prior = byConfirmation.get(trip.confirmationNumber.toUpperCase());
-      if (prior) {
-        await this.deps.flights.update(this.mergeEmailTripIntoFlight(prior, trip));
-        updated += 1;
-      } else {
-        await this.createFlightFromEmailTrip(passengerId, trip);
-        imported += 1;
+      // Expand a multi-leg (round-trip) confirmation into one flight per leg.
+      for (const legTrip of expandTripLegs(trip)) {
+        const key = flightLegKey(
+          legTrip.confirmationNumber,
+          legTrip.origin,
+          legTrip.destination,
+          legTrip.departureDateTime,
+        );
+        const prior = byLegKey.get(key);
+        if (prior) {
+          await this.deps.flights.update(this.mergeEmailTripIntoFlight(prior, legTrip));
+          updated += 1;
+        } else {
+          await this.createFlightFromEmailTrip(passengerId, legTrip);
+          imported += 1;
+        }
       }
     }
 
     for (const confirmation of folded.cancelledConfirmations) {
-      const prior = byConfirmation.get(confirmation.toUpperCase());
-      if (prior && prior.source === FlightSource.Email) {
-        await this.deps.flights.delete(prior.id);
-        cancelled += 1;
+      const priorLegs = byConfirmation.get(confirmation.toUpperCase()) ?? [];
+      for (const prior of priorLegs) {
+        if (prior.source === FlightSource.Email) {
+          await this.deps.flights.delete(prior.id);
+          cancelled += 1;
+        }
       }
     }
 
     this.deps.settings.update({ lastEmailImportAt: new Date().toISOString() });
+    log.info('Email import complete', { imported, updated, cancelled, skipped });
     return { scanned: messages.length, imported, updated, cancelled, skipped };
   }
 
@@ -334,16 +459,37 @@ export class AppService {
   }
 
   private matchPassengerByName(passengers: Passenger[], names: string[]): string | undefined {
-    const normalized = names.map((n) => n.trim().toLowerCase());
-    const byName = passengers.find((p) => normalized.includes(p.fullName.trim().toLowerCase()));
-    if (byName) return byName.id;
-    // If there is exactly one passenger, attribute the trip to them.
-    if (passengers.length === 1) return passengers[0]!.id;
-    return undefined;
+    const parsed = names.map((n) => n.trim()).filter((n) => n.length > 0);
+    const match = passengers.find((p) => parsed.some((n) => passengerNameMatches(n, p.fullName)));
+    return match?.id;
+  }
+
+  /**
+   * Resolve the passenger for an imported trip. The Gmail inbox is shared
+   * across the whole family, so each booking can be for a different person.
+   * Prefer an existing passenger that matches one of the email's names;
+   * otherwise auto-create a passenger from the first name on the booking and
+   * add it to {@link passengers} so later trips for the same person match.
+   */
+  private async resolvePassengerForImport(
+    passengers: Passenger[],
+    names: string[],
+  ): Promise<string | undefined> {
+    const existingId = this.matchPassengerByName(passengers, names);
+    if (existingId) return existingId;
+
+    const newName = names.map((n) => n.trim()).find((n) => n.length > 0);
+    if (!newName) return undefined;
+
+    const created = await this.createPassenger({ fullName: newName, accountIds: [] });
+    passengers.push(created);
+    log.info('Auto-created passenger from email import', { passenger: newName });
+    return created.id;
   }
 
   private mergeEmailTripIntoFlight(existing: Flight, trip: RetrievedTrip): Flight {
     const isPoints = trip.paidPoints != null;
+    const segments = toFlightSegments(trip);
     return {
       ...existing,
       route: {
@@ -355,6 +501,8 @@ export class AppService {
       },
       departureDateTime: trip.departureDateTime || existing.departureDateTime,
       arrivalDateTime: trip.arrivalDateTime ?? existing.arrivalDateTime,
+      durationMinutes: trip.durationMinutes ?? existing.durationMinutes,
+      segments: segments ?? existing.segments,
       fareType: trip.fareType ?? existing.fareType,
       originalCost: {
         purchaseType:
@@ -362,6 +510,7 @@ export class AppService {
         cashUsd: trip.paidCashUsd ?? existing.originalCost.cashUsd,
         points: trip.paidPoints ?? existing.originalCost.points,
         taxesAndFeesUsd: trip.taxesAndFeesUsd ?? existing.originalCost.taxesAndFeesUsd,
+        payments: trip.payments ?? existing.originalCost.payments,
       },
       source: FlightSource.Email,
       updatedAt: new Date().toISOString(),
@@ -382,12 +531,15 @@ export class AppService {
       },
       departureDateTime: trip.departureDateTime,
       arrivalDateTime: trip.arrivalDateTime,
+      durationMinutes: trip.durationMinutes,
+      segments: toFlightSegments(trip),
       fareType: trip.fareType,
       originalCost: {
         purchaseType: (trip.purchaseType ?? (isPoints ? 'points' : 'cash')) as Flight['originalCost']['purchaseType'],
         cashUsd: trip.paidCashUsd,
         points: trip.paidPoints,
         taxesAndFeesUsd: trip.taxesAndFeesUsd ?? 0,
+        payments: trip.payments,
       },
       bookingDate: now.slice(0, 10),
       source: FlightSource.Email,
@@ -458,28 +610,113 @@ export class AppService {
     return out;
   }
 
+  /**
+   * Re-estimate points from the STORED cash fares using the current award
+   * estimation rate, without hitting any provider/API. Lets the user retune the
+   * rate in Settings and see the Dashboard update instantly. Only touches
+   * estimated quotes that carry a cash fare; real (scraped) points are left as-is.
+   */
+  async recomputeEstimates(): Promise<FlightWithComparison[]> {
+    const flights = await this.deps.flights.listMonitored();
+    const s = this.deps.settings.get();
+    // Estimate award points from the stored cash fare using the same cents-per-
+    // point rate the user values points at (no API call).
+    const estimation = { centsPerPoint: s.pointValueCents / 100 };
+    const options = this.comparisonOptions();
+    const out: FlightWithComparison[] = [];
+
+    let recomputed = 0;
+    for (const flight of flights) {
+      const latest = await this.deps.quotes.getLatest(flight.id);
+      const quote = latest?.quote;
+      // Nothing to recompute without a stored, cash-based estimate.
+      if (!quote || !quote.pointsEstimated || quote.cashUsd == null) {
+        out.push(await this.toFlightWithComparison(flight, quote, latest?.comparison));
+        continue;
+      }
+
+      const reEstimated = {
+        ...quote,
+        points: estimatePointsFromCash(quote.cashUsd, estimation),
+        alternatives: quote.alternatives?.map((alt) =>
+          alt.pointsEstimated && alt.cashUsd != null
+            ? { ...alt, points: estimatePointsFromCash(alt.cashUsd, estimation) }
+            : alt,
+        ),
+      };
+      const comparison = this.pricing.compare(flight, reEstimated, options);
+      await this.deps.quotes.saveLatest(flight.id, reEstimated, comparison);
+      out.push(await this.toFlightWithComparison(flight, reEstimated, comparison));
+      recomputed += 1;
+    }
+    log.info('Recomputed point estimates', {
+      centsPerPoint: estimation.centsPerPoint,
+      flights: flights.length,
+      recomputed,
+    });
+    return out;
+  }
+
   // --- Settings ------------------------------------------------------------
 
   getSettings(): AppSettings {
     return this.deps.settings.get();
   }
-
   updateSettings(partial: Partial<AppSettings>): AppSettings {
     return this.deps.settings.update(partial);
   }
 
   /**
-   * Store (or clear) the SerpApi key in the OS secret store and mirror the
-   * configured flag in settings. Passing an empty string removes the key.
+   * Store (or clear) a SerpApi key in the given slot (0-based, max 3) in the OS
+   * secret store and mirror the per-slot configured flags in settings. Passing
+   * an empty string removes that slot's key.
    */
-  async setSerpApiKey(key: string): Promise<AppSettings> {
+  async setSerpApiKey(slot: number, key: string): Promise<AppSettings> {
+    const account = SERPAPI_SECRET_ACCOUNTS[slot];
+    if (!account) {
+      throw new Error(`Invalid SerpApi key slot ${slot}.`);
+    }
     const trimmed = key.trim();
     if (!trimmed) {
-      await this.deps.secrets.deletePassword(SERPAPI_SECRET_ACCOUNT);
-      return this.deps.settings.update({ serpApiConfigured: false });
+      await this.deps.secrets.deletePassword(account);
+    } else {
+      await this.deps.secrets.setPassword(account, trimmed);
     }
-    await this.deps.secrets.setPassword(SERPAPI_SECRET_ACCOUNT, trimmed);
-    return this.deps.settings.update({ serpApiConfigured: true });
+    const slots = await Promise.all(
+      SERPAPI_SECRET_ACCOUNTS.map(async (acc) => Boolean((await this.deps.secrets.getPassword(acc))?.trim())),
+    );
+    return this.deps.settings.update({ serpApiKeys: slots });
+  }
+
+  /**
+   * Look up each configured SerpApi key's monthly quota usage via SerpApi's
+   * free Account API (doesn't count against the search quota). Returns one
+   * entry per configured slot; slots without a key are omitted.
+   */
+  async getSerpApiUsage(): Promise<SerpApiKeyUsage[]> {
+    const fetchJson = async (url: string): Promise<unknown> => {
+      const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    };
+
+    const usage: SerpApiKeyUsage[] = [];
+    for (let slot = 0; slot < SERPAPI_SECRET_ACCOUNTS.length; slot++) {
+      const key = (await this.deps.secrets.getPassword(SERPAPI_SECRET_ACCOUNTS[slot]!))?.trim();
+      if (!key) continue;
+      try {
+        const u = await fetchSerpApiUsage(fetchJson, key);
+        usage.push({
+          slot,
+          thisMonthUsage: u.thisMonthUsage,
+          searchesPerMonth: u.searchesPerMonth,
+          totalSearchesLeft: u.totalSearchesLeft,
+        });
+      } catch (err) {
+        usage.push({ slot, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return usage;
   }
 
   // --- Export --------------------------------------------------------------
@@ -529,17 +766,26 @@ export class AppService {
   /** Build the airline provider based on current settings (real vs fake). */
   private createProvider(): AirlineProvider {
     const s = this.deps.settings.get();
-    // Use the user's point value as the cash→points estimation rate so the
-    // estimate is consistent with how the rest of the app values points.
+    // Estimate points from a cash fare using the user's cents-per-point rate, so
+    // estimates track Southwest's actual award pricing. Tunable in Settings.
     const estimation = { centsPerPoint: s.pointValueCents / 100 };
     if (s.scrapingEnabled && s.fareSource === 'serpapi') {
       return new GoogleFlightsSerpApiProvider({
         fetchJson: async (url) => {
-          const res = await fetch(url);
+          // SerpApi runs the Google Flights search live, so allow generous time
+          // but never hang forever (Node has no default fetch timeout).
+          const res = await fetch(url, { signal: AbortSignal.timeout(45_000) });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
         },
-        getApiKey: () => this.deps.secrets.getPassword(SERPAPI_SECRET_ACCOUNT),
+        getApiKeys: async () => {
+          const keys = await Promise.all(
+            SERPAPI_SECRET_ACCOUNTS.map((account) => this.deps.secrets.getPassword(account)),
+          );
+          return keys
+            .map((k) => k?.trim())
+            .filter((k): k is string => k != null && k.length > 0);
+        },
         estimation,
       });
     }
@@ -605,8 +851,8 @@ export class AppService {
     names: string[],
     account: Account,
   ): string | undefined {
-    const normalized = names.map((n) => n.trim().toLowerCase());
-    const byName = passengers.find((p) => normalized.includes(p.fullName.trim().toLowerCase()));
+    const normalized = names.map((n) => n.trim()).filter((n) => n.length > 0);
+    const byName = passengers.find((p) => normalized.some((n) => passengerNameMatches(n, p.fullName)));
     if (byName) return byName.id;
     // Fall back to the account's first mapped passenger.
     return account.passengerIds[0];
@@ -630,6 +876,7 @@ export class AppService {
       },
       departureDateTime: trip.departureDateTime,
       arrivalDateTime: trip.arrivalDateTime,
+      durationMinutes: trip.durationMinutes,
       fareType: trip.fareType,
       originalCost: {
         purchaseType: (trip.purchaseType ?? (isPoints ? 'points' : 'cash')) as Flight['originalCost']['purchaseType'],

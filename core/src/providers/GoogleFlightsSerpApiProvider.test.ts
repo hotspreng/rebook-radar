@@ -78,6 +78,48 @@ test('surfaces SerpApi error payloads', async () => {
   await assert.rejects(sut.searchPrice(QUERY), /Invalid API key/);
 });
 
+test('rotates to the next key when one runs out of searches', async () => {
+  const usedKeys: string[] = [];
+  const sut = new GoogleFlightsSerpApiProvider({
+    fetchJson: async (url) => {
+      const key = new URL(url).searchParams.get('api_key') ?? '';
+      usedKeys.push(key);
+      if (key === 'key-1') {
+        return { error: 'Your account has run out of searches.' };
+      }
+      return {
+        best_flights: [
+          {
+            price: 113,
+            flights: [
+              {
+                airline: 'Southwest',
+                departure_airport: { id: 'ROC', time: '2026-10-08 06:00' },
+                arrival_airport: { id: 'MDW', time: '2026-10-08 07:30' },
+              },
+            ],
+          },
+        ],
+      };
+    },
+    getApiKeys: async () => ['key-1', 'key-2'],
+    estimation: { centsPerPoint: 0.0135, awardTaxesUsd: 5.6 },
+  });
+
+  const results = await sut.searchPrice(QUERY);
+  assert.equal(results.length, 1);
+  assert.deepEqual(usedKeys, ['key-1', 'key-2']);
+});
+
+test('throws when all keys are out of searches', async () => {
+  const sut = new GoogleFlightsSerpApiProvider({
+    fetchJson: async () => ({ error: 'You have run out of searches this month.' }),
+    getApiKeys: async () => ['key-1', 'key-2'],
+    estimation: { centsPerPoint: 0.0135, awardTaxesUsd: 5.6 },
+  });
+  await assert.rejects(sut.searchPrice(QUERY), /out of searches/);
+});
+
 test('login and trip import are not supported', async () => {
   const sut = provider(async () => ({}));
   await assert.rejects(sut.login(), /not available/);

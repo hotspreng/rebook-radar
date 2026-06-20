@@ -1,4 +1,4 @@
-import type { Flight, FlightRepository } from '@swr/core';
+import type { Flight, FlightRepository, FlightSegment, PaymentMethod } from '@swr/core';
 import { FareType, FlightSource, PurchaseType } from '@swr/core';
 import { execute, queryAll, queryOne } from '../db.js';
 
@@ -13,11 +13,14 @@ interface FlightRow {
   dest_name: string | null;
   departure_dt: string;
   arrival_dt: string | null;
+  duration_minutes: number | null;
   fare_type: string;
   purchase_type: string;
   cash_usd: number | null;
   points: number | null;
   taxes_fees_usd: number;
+  segments_json: string | null;
+  payments_json: string | null;
   booking_date: string;
   source: string;
   notes: string | null;
@@ -26,7 +29,19 @@ interface FlightRow {
   updated_at: string;
 }
 
+/** Parse a JSON column into a typed value, returning undefined on any failure. */
+function parseJson<T>(raw: string | null): T | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 function toDomain(row: FlightRow): Flight {
+  const segments = parseJson<FlightSegment[]>(row.segments_json);
+  const payments = parseJson<PaymentMethod[]>(row.payments_json);
   return {
     id: row.id,
     passengerId: row.passenger_id,
@@ -38,12 +53,15 @@ function toDomain(row: FlightRow): Flight {
     },
     departureDateTime: row.departure_dt,
     arrivalDateTime: row.arrival_dt ?? undefined,
+    durationMinutes: row.duration_minutes ?? undefined,
+    segments: segments && segments.length ? segments : undefined,
     fareType: row.fare_type as FareType,
     originalCost: {
       purchaseType: row.purchase_type as PurchaseType,
       cashUsd: row.cash_usd ?? undefined,
       points: row.points ?? undefined,
       taxesAndFeesUsd: row.taxes_fees_usd,
+      payments: payments && payments.length ? payments : undefined,
     },
     bookingDate: row.booking_date,
     source: row.source as FlightSource,
@@ -66,11 +84,17 @@ function bindParams(f: Flight): Record<string, unknown> {
     ':dest_name': f.route.destination.name ?? null,
     ':departure_dt': f.departureDateTime,
     ':arrival_dt': f.arrivalDateTime ?? null,
+    ':duration_minutes': f.durationMinutes ?? null,
     ':fare_type': f.fareType,
     ':purchase_type': f.originalCost.purchaseType,
     ':cash_usd': f.originalCost.cashUsd ?? null,
     ':points': f.originalCost.points ?? null,
     ':taxes_fees_usd': f.originalCost.taxesAndFeesUsd,
+    ':segments_json': f.segments && f.segments.length ? JSON.stringify(f.segments) : null,
+    ':payments_json':
+      f.originalCost.payments && f.originalCost.payments.length
+        ? JSON.stringify(f.originalCost.payments)
+        : null,
     ':booking_date': f.bookingDate,
     ':source': f.source,
     ':notes': f.notes ?? null,
@@ -113,14 +137,14 @@ export class SqliteFlightRepository implements FlightRepository {
       `INSERT INTO flights (
         id, passenger_id, account_id, confirmation_number,
         origin_code, origin_name, dest_code, dest_name,
-        departure_dt, arrival_dt, fare_type, purchase_type,
-        cash_usd, points, taxes_fees_usd, booking_date,
+        departure_dt, arrival_dt, duration_minutes, fare_type, purchase_type,
+        cash_usd, points, taxes_fees_usd, segments_json, payments_json, booking_date,
         source, notes, monitoring, created_at, updated_at
       ) VALUES (
         :id, :passenger_id, :account_id, :confirmation_number,
         :origin_code, :origin_name, :dest_code, :dest_name,
-        :departure_dt, :arrival_dt, :fare_type, :purchase_type,
-        :cash_usd, :points, :taxes_fees_usd, :booking_date,
+        :departure_dt, :arrival_dt, :duration_minutes, :fare_type, :purchase_type,
+        :cash_usd, :points, :taxes_fees_usd, :segments_json, :payments_json, :booking_date,
         :source, :notes, :monitoring, :created_at, :updated_at
       )`,
       bindParams(f),
@@ -133,8 +157,8 @@ export class SqliteFlightRepository implements FlightRepository {
       `UPDATE flights SET
         passenger_id = :passenger_id, account_id = :account_id, confirmation_number = :confirmation_number,
         origin_code = :origin_code, origin_name = :origin_name, dest_code = :dest_code, dest_name = :dest_name,
-        departure_dt = :departure_dt, arrival_dt = :arrival_dt, fare_type = :fare_type, purchase_type = :purchase_type,
-        cash_usd = :cash_usd, points = :points, taxes_fees_usd = :taxes_fees_usd, booking_date = :booking_date,
+        departure_dt = :departure_dt, arrival_dt = :arrival_dt, duration_minutes = :duration_minutes, fare_type = :fare_type, purchase_type = :purchase_type,
+        cash_usd = :cash_usd, points = :points, taxes_fees_usd = :taxes_fees_usd, segments_json = :segments_json, payments_json = :payments_json, booking_date = :booking_date,
         source = :source, notes = :notes, monitoring = :monitoring, updated_at = :updated_at
        WHERE id = :id`,
       bindParams(f),

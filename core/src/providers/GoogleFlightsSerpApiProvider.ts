@@ -20,8 +20,14 @@ export type JsonFetch = (url: string) => Promise<unknown>;
 export interface GoogleFlightsSerpApiOptions {
   /** Performs the HTTP GET and parses JSON. Should throw on non-2xx responses. */
   fetchJson: JsonFetch;
-  /** Resolves the SerpApi key (e.g. from the OS secret store). */
-  getApiKey: () => Promise<string | undefined>;
+  /** Resolves a single SerpApi key (e.g. from the OS secret store). */
+  getApiKey?: () => Promise<string | undefined>;
+  /**
+   * Resolves an ordered list of SerpApi keys. The provider tries them in order,
+   * rotating to the next when one runs out of free monthly searches. Takes
+   * precedence over {@link getApiKey} when provided.
+   */
+  getApiKeys?: () => Promise<string[]>;
   /** Cash→points conversion settings. */
   estimation?: PointsEstimationOptions;
   /** SerpApi search endpoint. Defaults to the public one. */
@@ -42,6 +48,8 @@ interface SerpItinerary {
   flights?: SerpFlightSegment[];
   layovers?: unknown[];
   price?: number;
+  /** Total travel time in minutes, across all segments + layovers. */
+  total_duration?: number;
 }
 interface SerpResponse {
   error?: string;
@@ -63,7 +71,8 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
   readonly name = 'Google Flights (SerpApi)';
 
   private readonly fetchJson: JsonFetch;
-  private readonly getApiKey: () => Promise<string | undefined>;
+  private readonly getApiKey?: () => Promise<string | undefined>;
+  private readonly getApiKeys?: () => Promise<string[]>;
   private readonly estimation: PointsEstimationOptions;
   private readonly baseUrl: string;
   private readonly airlineName: string;
@@ -72,6 +81,7 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
   constructor(options: GoogleFlightsSerpApiOptions) {
     this.fetchJson = options.fetchJson;
     this.getApiKey = options.getApiKey;
+    this.getApiKeys = options.getApiKeys;
     this.estimation = options.estimation ?? {};
     this.baseUrl = options.baseUrl ?? 'https://serpapi.com/search.json';
     this.airlineName = options.airlineName ?? 'Southwest';
@@ -96,8 +106,8 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
   }
 
   async searchPrice(query: FlightSearchQuery): Promise<FlightSearchResult[]> {
-    const apiKey = (await this.getApiKey())?.trim();
-    if (!apiKey) {
+    const keys = await this.resolveKeys();
+    if (keys.length === 0) {
       throw new AirlineError(
         'NOT_SUPPORTED',
         'No SerpApi key configured. Add one in Settings → Live price source.',
@@ -105,32 +115,99 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
       );
     }
 
-    const url = this.buildUrl(query, apiKey);
-    this.log.info('Querying SerpApi google_flights', {
-      origin: query.origin,
-      destination: query.destination,
-      date: query.departureDate,
-    });
-
-    let raw: unknown;
-    try {
-      raw = await this.fetchJson(url);
-    } catch (err) {
-      throw new AirlineError('NETWORK', `SerpApi request failed: ${String(err)}`, {
-        providerId: this.id,
-        cause: err,
+    let lastQuotaError: unknown;
+    for (let i = 0; i < keys.length; i++) {
+      const apiKey = keys[i]!;
+      const isLast = i === keys.length - 1;
+      const url = this.buildUrl(query, apiKey);
+      this.log.info('Querying SerpApi google_flights', {
+        origin: query.origin,
+        destination: query.destination,
+        date: query.departureDate,
+        keySlot: i + 1,
+        keyCount: keys.length,
       });
+
+      let raw: unknown;
+      try {
+        raw = await this.fetchJson(url);
+      } catch (err) {
+        if (this.isQuotaError(String(err)) && !isLast) {
+          this.log.warn('SerpApi key out of searches — rotating to next key', { keySlot: i + 1 });
+          lastQuotaError = err;
+          continue;
+        }
+        throw new AirlineError('NETWORK', `SerpApi request failed: ${String(err)}`, {
+          providerId: this.id,
+          cause: err,
+        });
+      }
+
+      const body = (raw ?? {}) as SerpResponse;
+      if (body.error) {
+        if (this.isQuotaError(body.error) && !isLast) {
+          this.log.warn('SerpApi key out of searches — rotating to next key', {
+            keySlot: i + 1,
+            error: body.error,
+          });
+          lastQuotaError = new Error(body.error);
+          continue;
+        }
+        throw new AirlineError('NETWORK', `SerpApi error: ${body.error}`, { providerId: this.id });
+      }
+
+      return this.parseResults(body, query, i + 1);
     }
 
-    const body = (raw ?? {}) as SerpResponse;
-    if (body.error) {
-      throw new AirlineError('NETWORK', `SerpApi error: ${body.error}`, { providerId: this.id });
-    }
+    throw new AirlineError(
+      'NETWORK',
+      `All ${keys.length} SerpApi key(s) are out of searches. Add another key in Settings or wait ` +
+        `for the monthly quota to reset. (${String(lastQuotaError)})`,
+      { providerId: this.id },
+    );
+  }
 
+  /** Resolve the ordered list of usable API keys (multi-key takes precedence). */
+  private async resolveKeys(): Promise<string[]> {
+    if (this.getApiKeys) {
+      const keys = await this.getApiKeys();
+      return keys.map((k) => k.trim()).filter((k) => k.length > 0);
+    }
+    const single = (await this.getApiKey?.())?.trim();
+    return single ? [single] : [];
+  }
+
+  /** True when a SerpApi error/message indicates the monthly search quota is exhausted. */
+  private isQuotaError(message: string): boolean {
+    return /run out of searches|ran out of searches|exceeded|out of searches|plan searches|monthly search|account.*limit|HTTP 429|429/i.test(
+      message,
+    );
+  }
+
+  /** Map a successful SerpApi response into search results (or throw NoResults). */
+  private parseResults(
+    body: SerpResponse,
+    query: FlightSearchQuery,
+    keySlot: number,
+  ): FlightSearchResult[] {
     const itineraries = [...(body.best_flights ?? []), ...(body.other_flights ?? [])];
     const results = itineraries
       .map((it) => this.mapItinerary(it))
       .filter((r): r is FlightSearchResult => r != null);
+
+    this.log.info('SerpApi responded', {
+      best: body.best_flights?.length ?? 0,
+      other: body.other_flights?.length ?? 0,
+      keySlot,
+      airlinesSeen: [
+        ...new Set(
+          itineraries.flatMap((it) => (it.flights ?? []).map((s) => s.airline ?? '?')),
+        ),
+      ],
+      matched: results.length,
+      centsPerPoint: this.estimation.centsPerPoint,
+      fares: results.map((r) => ({ cashUsd: r.cashUsd, points: r.points })),
+    });
 
     if (results.length === 0) {
       throw new NoResultsError(
@@ -195,6 +272,7 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
       points,
       pointsEstimated: points != null ? true : undefined,
       stops,
+      durationMinutes: typeof it.total_duration === 'number' ? it.total_duration : undefined,
     };
   }
 

@@ -48,6 +48,22 @@ export interface PointsAmount {
 }
 
 /**
+ * One form of payment applied to a booking.
+ *
+ * Southwest fares can be funded by a mix of flight credits, LUV vouchers,
+ * Rapid Rewards points, gift cards, and/or a credit card. Each applied method
+ * is captured here so the original cost can be itemized.
+ */
+export interface PaymentMethod {
+  /** Label as shown by Southwest, e.g. "Flight Credit", "Southwest LUV Voucher". */
+  label: string;
+  /** Cash amount applied in USD, when this method paid cash. */
+  amountUsd?: number;
+  /** Points applied, when this method paid points. */
+  points?: number;
+}
+
+/**
  * The total cost of a booking. Southwest points bookings still incur cash
  * taxes/fees, so we always track both a primary amount and the cash fees.
  */
@@ -59,6 +75,8 @@ export interface BookingCost {
   points?: number;
   /** Taxes & fees paid in cash USD (applies to both cash and points bookings). */
   taxesAndFeesUsd: number;
+  /** How the booking was funded (credits, vouchers, points, card), when known. */
+  payments?: PaymentMethod[];
 }
 
 /** ISO-8601 date-time string, e.g. "2026-08-14T09:35:00-05:00". */

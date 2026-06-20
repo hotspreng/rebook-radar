@@ -7,12 +7,15 @@ import { FareType, IsoDateTime, PurchaseType } from './common.js';
 export interface FareAlternative {
   flightNumber?: string;
   departureDateTime: IsoDateTime;
+  arrivalDateTime?: IsoDateTime;
   fareType: FareType;
   cashUsd?: number;
   points?: number;
   pointsEstimated?: boolean;
   pointsTaxesAndFeesUsd?: number;
   stops?: number;
+  /** Total travel time in minutes (handles timezone changes). */
+  durationMinutes?: number;
 }
 
 /**
@@ -37,6 +40,12 @@ export interface PriceQuote {
 
   /** Origin departure time matched for this quote. */
   departureDateTime: IsoDateTime;
+
+  /** Destination arrival time matched for this quote. */
+  arrivalDateTime?: IsoDateTime;
+
+  /** Total travel time in minutes (handles timezone changes). */
+  durationMinutes?: number;
 
   /** When this quote was fetched. */
   fetchedAt: string;
