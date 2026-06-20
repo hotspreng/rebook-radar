@@ -4,6 +4,7 @@ import { Passenger } from '../models/Passenger.js';
 import { PriceComparison } from '../models/PriceComparison.js';
 import { PriceQuote } from '../models/PriceQuote.js';
 import { PriceHistoryEntry } from '../models/PriceHistory.js';
+import { RebookEvent } from '../models/RebookEvent.js';
 
 /**
  * Persistence "ports" (hexagonal architecture). Core defines WHAT it needs from
@@ -52,6 +53,17 @@ export interface PriceHistoryRepository {
   /** The most recently recorded observation, if any. */
   latest(flightId: string): Promise<PriceHistoryEntry | undefined>;
   /** Remove all history for a flight (used when the flight is deleted). */
+  deleteForFlight(flightId: string): Promise<void>;
+}
+
+export interface RebookEventRepository {
+  /** Record a realized rebooking saving. */
+  append(event: RebookEvent): Promise<void>;
+  /** All recorded rebooking events, newest first. */
+  list(): Promise<RebookEvent[]>;
+  /** Events for a single flight, newest first. */
+  listByFlight(flightId: string): Promise<RebookEvent[]>;
+  /** Remove all rebooking events for a flight (used when the flight is deleted). */
   deleteForFlight(flightId: string): Promise<void>;
 }
 

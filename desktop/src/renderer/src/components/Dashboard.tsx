@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { PurchaseType, Recommendation } from '@swr/core';
-import type { EmailImportProgress, Flight, FlightWithComparison } from '@shared/dto';
+import type { EmailImportProgress, Flight, FlightWithComparison, SavingsReport } from '@shared/dto';
 import {
   ArrowRight,
   ChevronRight,
@@ -16,7 +16,7 @@ import { Button, Card, RecommendationBadge } from './ui.js';
 import { FlightFormModal } from './FlightFormModal.js';
 import { FlightDetailDrawer } from './FlightDetailDrawer.js';
 import { AlternativesPanel, getCheaperAlternatives } from './AlternativesPanel.js';
-import { formatDate, formatDateTime, formatDuration, formatNative, formatTime, formatUsd } from '../lib/format.js';
+import { formatDate, formatDateTime, formatDuration, formatNative, formatPoints, formatTime, formatUsd } from '../lib/format.js';
 
 const api = window.swr;
 
@@ -81,6 +81,20 @@ export function Dashboard(): JSX.Element {
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<EmailImportProgress | null>(null);
+  const [savings, setSavings] = useState<SavingsReport['allTime'] | null>(null);
+
+  // Realized rebooking savings (all-time totals) for the summary cards. Loaded
+  // on mount and refreshed whenever the flight list changes (e.g. after an
+  // import or a price check), since a rebooking saving is recorded on import.
+  useEffect(() => {
+    let cancelled = false;
+    void api.reporting.savings().then((r) => {
+      if (!cancelled) setSavings(r.allTime);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [flights]);
 
   // Live import progress streamed from the main process (emails scanned, trips
   // found). Auto-clears a few seconds after the import finishes.
@@ -181,7 +195,6 @@ export function Dashboard(): JSX.Element {
     const totalSavings = rebook.reduce((sum, f) => sum + (f.comparison?.savingsUsd ?? 0), 0);
     return {
       total: filtered.length,
-      monitored: filtered.filter((f) => f.flight.monitoring).length,
       rebook: rebook.length,
       totalSavings,
     };
@@ -288,11 +301,25 @@ export function Dashboard(): JSX.Element {
         </div>
       </header>
 
-      <div className="grid grid-cols-4 gap-4 px-7 py-5">
+      <div className="grid grid-cols-3 gap-4 px-7 py-5 xl:grid-cols-6">
         <StatCard label="Tracked flights" value={stats.total.toString()} />
-        <StatCard label="Monitored" value={stats.monitored.toString()} />
         <StatCard label="Recommended to rebook" value={stats.rebook.toString()} accent="emerald" />
         <StatCard label="Potential savings" value={formatUsd(stats.totalSavings)} accent="emerald" />
+        <StatCard
+          label="Points saved (rebooked)"
+          value={formatPoints(savings?.pointsSaved ?? 0)}
+          accent="emerald"
+        />
+        <StatCard
+          label="Cash saved (rebooked)"
+          value={formatUsd(savings?.cashSavedUsd ?? 0)}
+          accent="emerald"
+        />
+        <StatCard
+          label="Total saved (rebooked)"
+          value={formatUsd(savings?.totalValueUsd ?? 0)}
+          accent="emerald"
+        />
       </div>
 
       <div className="flex items-center gap-3 px-7 pb-4">

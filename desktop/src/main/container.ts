@@ -10,6 +10,7 @@ import { SqliteFlightRepository } from './database/repositories/SqliteFlightRepo
 import { SqlitePassengerRepository } from './database/repositories/SqlitePassengerRepository.js';
 import { SqliteQuoteRepository } from './database/repositories/SqliteQuoteRepository.js';
 import { SqlitePriceHistoryRepository } from './database/repositories/SqlitePriceHistoryRepository.js';
+import { SqliteRebookEventRepository } from './database/repositories/SqliteRebookEventRepository.js';
 import { SafeStorageSecretStore } from './security/SafeStorageSecretStore.js';
 import { AppService } from './services/AppService.js';
 import { SettingsStore } from './services/SettingsStore.js';
@@ -46,6 +47,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
   const flights = new SqliteFlightRepository();
   const quotes = new SqliteQuoteRepository();
   const priceHistory = new SqlitePriceHistoryRepository();
+  const rebookEvents = new SqliteRebookEventRepository();
   const secrets = new SafeStorageSecretStore();
   const notifier = new Notifier();
 
@@ -67,6 +69,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
     flights,
     quotes,
     priceHistory,
+    rebookEvents,
     secrets,
     debugDir,
     scraperProfileDir,

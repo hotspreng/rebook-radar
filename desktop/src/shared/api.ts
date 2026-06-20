@@ -17,6 +17,7 @@ import type {
   GmailCredentialsInput,
   MonitorStatus,
   PriceUpdateEvent,
+  SavingsReport,
   SerpApiKeyUsage,
   SetPasswordInput,
 } from './dto.js';
@@ -81,6 +82,9 @@ export interface SwrApi {
     start(): Promise<MonitorStatus>;
     stop(): Promise<MonitorStatus>;
     status(): Promise<MonitorStatus>;
+  };
+  reporting: {
+    savings(): Promise<SavingsReport>;
   };
   exportCsv(): Promise<{ saved: boolean; path?: string }>;
   openExternal(url: string): Promise<void>;

@@ -50,6 +50,9 @@ export const IPC = {
   // Export
   exportCsv: 'export:csv',
 
+  // Reporting
+  reportSavings: 'report:savings',
+
   // System
   openExternal: 'system:openExternal',
 

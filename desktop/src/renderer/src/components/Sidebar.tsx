@@ -1,9 +1,10 @@
-import { LayoutDashboard, Users, KeyRound, Settings, Plane } from 'lucide-react';
+import { LayoutDashboard, Users, KeyRound, Settings, Plane, BarChart3 } from 'lucide-react';
 
-export type Route = 'dashboard' | 'passengers' | 'accounts' | 'settings';
+export type Route = 'dashboard' | 'reporting' | 'passengers' | 'accounts' | 'settings';
 
 const items: { id: Route; label: string; icon: JSX.Element }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+  { id: 'reporting', label: 'Reporting', icon: <BarChart3 size={18} /> },
   { id: 'passengers', label: 'Passengers', icon: <Users size={18} /> },
   { id: 'accounts', label: 'Accounts', icon: <KeyRound size={18} /> },
   { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },

@@ -8,6 +8,7 @@ import type {
   PriceComparison,
   PriceHistoryEntry,
   PriceQuote,
+  PurchaseType,
 } from '@swr/core';
 
 /** User-facing settings persisted in the local DB. */
@@ -110,6 +111,59 @@ export interface EmailImportProgress {
   total?: number;
   /** Active upcoming trips found after parsing, when known. */
   tripsFound?: number;
+}
+
+/** Aggregated rebooking savings for one period (a month, a year, or all-time). */
+export interface SavingsBucket {
+  /**
+   * Period key. For monthly buckets, "YYYY-MM"; for yearly buckets, "YYYY";
+   * for the all-time total, "all".
+   */
+  key: string;
+  /** Human-friendly label, e.g. "June 2026", "2026", or "All time". */
+  label: string;
+  /** Number of rebooking events in this period. */
+  rebookings: number;
+  /** Total points saved across points bookings in this period. */
+  pointsSaved: number;
+  /** Total actual cash saved (USD) across cash bookings in this period. */
+  cashSavedUsd: number;
+  /**
+   * Estimated USD value of the points saved (points valued via the point value
+   * recorded at each event). Does NOT include actual cash savings.
+   */
+  pointsValueUsd: number;
+  /** Grand total USD saved (actual cash + estimated value of points). */
+  totalValueUsd: number;
+}
+
+/** A single recorded rebooking saving, for the report's breakdown table. */
+export interface RebookEventView {
+  id: string;
+  flightId: string;
+  passengerName: string;
+  confirmationNumber: string;
+  routeLabel: string;
+  departureDate: string;
+  purchaseType: PurchaseType;
+  originalAmount: number;
+  newAmount: number;
+  pointsSaved?: number;
+  cashSavedUsd?: number;
+  estimatedValueUsd: number;
+  recordedAt: string;
+}
+
+/** Full savings report shown on the Reporting blade. */
+export interface SavingsReport {
+  /** All-time totals across every recorded rebooking. */
+  allTime: SavingsBucket;
+  /** Per-month buckets, newest month first. */
+  byMonth: SavingsBucket[];
+  /** Per-year buckets, newest year first. */
+  byYear: SavingsBucket[];
+  /** Every rebooking event, newest first (the breakdown table). */
+  events: RebookEventView[];
 }
 
 /** Input for creating an account, including the password to store securely. */

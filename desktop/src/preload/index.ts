@@ -12,6 +12,7 @@ import type {
   GmailCredentialsInput,
   MonitorStatus,
   PriceUpdateEvent,
+  SavingsReport,
   SerpApiKeyUsage,
   SetPasswordInput,
 } from '../shared/dto.js';
@@ -83,6 +84,9 @@ const api: SwrApi = {
     start: () => invoke<MonitorStatus>(IPC.monitorStart),
     stop: () => invoke<MonitorStatus>(IPC.monitorStop),
     status: () => invoke<MonitorStatus>(IPC.monitorStatus),
+  },
+  reporting: {
+    savings: () => invoke<SavingsReport>(IPC.reportSavings),
   },
   exportCsv: () => invoke<{ saved: boolean; path?: string }>(IPC.exportCsv),
   openExternal: (url: string) => invoke<void>(IPC.openExternal, url),

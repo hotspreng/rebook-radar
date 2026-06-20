@@ -77,6 +77,25 @@ CREATE TABLE IF NOT EXISTS price_history (
   value_usd REAL NOT NULL
 );
 
+-- Realized rebooking savings. One row is appended when a tracked flight is
+-- rebooked for the same date/route at a lower price than originally paid.
+CREATE TABLE IF NOT EXISTS rebook_events (
+  id TEXT PRIMARY KEY,
+  flight_id TEXT NOT NULL,
+  passenger_id TEXT NOT NULL,
+  confirmation_number TEXT NOT NULL,
+  route_label TEXT NOT NULL,
+  departure_date TEXT NOT NULL,
+  purchase_type TEXT NOT NULL,
+  original_amount REAL NOT NULL,
+  new_amount REAL NOT NULL,
+  points_saved INTEGER,
+  cash_saved_usd REAL,
+  estimated_value_usd REAL NOT NULL,
+  point_value_cents REAL NOT NULL,
+  recorded_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -85,6 +104,8 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE INDEX IF NOT EXISTS idx_flights_passenger ON flights(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_flights_account ON flights(account_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_flight ON price_history(flight_id, recorded_at);
+CREATE INDEX IF NOT EXISTS idx_rebook_events_flight ON rebook_events(flight_id);
+CREATE INDEX IF NOT EXISTS idx_rebook_events_recorded ON rebook_events(recorded_at);
 `;
 
 /**

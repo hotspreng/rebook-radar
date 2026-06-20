@@ -96,6 +96,9 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
     return { saved: true, path: filePath };
   });
 
+  // Reporting
+  handle(IPC.reportSavings, () => service.getSavingsReport());
+
   // System
   handle<string>(IPC.openExternal, (url) => shell.openExternal(url));
 

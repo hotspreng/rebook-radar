@@ -31,11 +31,13 @@ import {
   type PriceHistoryEntry,
   type PriceHistoryRepository,
   type QuoteRepository,
+  type RebookEvent,
+  type RebookEventRepository,
   type RetrievedTrip,
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { PlaywrightSouthwestClient } from '../scraping/PlaywrightSouthwestClient.js';
 import { GmailMessageSource } from '../email/GmailMessageSource.js';
@@ -125,6 +127,25 @@ function toFlightSegments(trip: RetrievedTrip): FlightSegment[] | undefined {
   }));
 }
 
+/** An empty savings bucket with all totals zeroed. */
+function emptyBucket(key: string, label: string): SavingsBucket {
+  return {
+    key,
+    label,
+    rebookings: 0,
+    pointsSaved: 0,
+    cashSavedUsd: 0,
+    pointsValueUsd: 0,
+    totalValueUsd: 0,
+  };
+}
+
+/** Long month label, e.g. "June 2026". */
+function monthLabel(date: Date, valid: boolean): string {
+  if (!valid) return 'Unknown';
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
 export interface AppServiceDeps {
   config: AppConfig;
   settings: SettingsStore;
@@ -133,6 +154,7 @@ export interface AppServiceDeps {
   flights: FlightRepository;
   quotes: QuoteRepository;
   priceHistory: PriceHistoryRepository;
+  rebookEvents: RebookEventRepository;
   secrets: SecretStore;
   /** Directory where the scraper writes debug screenshots/HTML. */
   debugDir: string;
@@ -429,6 +451,9 @@ export class AppService {
           flight = this.mergeEmailTripIntoFlight(prior, legTrip);
           await this.deps.flights.update(flight);
           updated += 1;
+          // A re-imported confirmation for the same date/route at a lower paid
+          // price than the frozen original is a realized rebooking saving.
+          await this.maybeRecordRebooking(prior, legTrip);
         } else {
           flight = await this.createFlightFromEmailTrip(passengerId, legTrip);
           imported += 1;
@@ -443,6 +468,8 @@ export class AppService {
       const priorLegs = byConfirmation.get(confirmation.toUpperCase()) ?? [];
       for (const prior of priorLegs) {
         if (prior.source === FlightSource.Email) {
+          await this.deps.priceHistory.deleteForFlight(prior.id);
+          await this.deps.rebookEvents.deleteForFlight(prior.id);
           await this.deps.flights.delete(prior.id);
           cancelled += 1;
         }
@@ -517,8 +544,19 @@ export class AppService {
   }
 
   private mergeEmailTripIntoFlight(existing: Flight, trip: RetrievedTrip): Flight {
-    const isPoints = trip.paidPoints != null;
     const segments = toFlightSegments(trip);
+    // Preserve the lifetime-FIRST original cost as the savings baseline. A
+    // rebooking at a lower price must NOT overwrite the original downward
+    // (that drop is recorded as a RebookEvent instead). We only backfill an
+    // original amount that was previously missing.
+    const original = existing.originalCost;
+    const mergedOriginal: Flight['originalCost'] = {
+      purchaseType: original.purchaseType,
+      cashUsd: original.cashUsd ?? trip.paidCashUsd,
+      points: original.points ?? trip.paidPoints,
+      taxesAndFeesUsd: original.taxesAndFeesUsd ?? trip.taxesAndFeesUsd ?? 0,
+      payments: original.payments ?? trip.payments,
+    };
     return {
       ...existing,
       route: {
@@ -533,17 +571,68 @@ export class AppService {
       durationMinutes: trip.durationMinutes ?? existing.durationMinutes,
       segments: segments ?? existing.segments,
       fareType: trip.fareType ?? existing.fareType,
-      originalCost: {
-        purchaseType:
-          trip.purchaseType ?? (isPoints ? 'points' : 'cash') as Flight['originalCost']['purchaseType'],
-        cashUsd: trip.paidCashUsd ?? existing.originalCost.cashUsd,
-        points: trip.paidPoints ?? existing.originalCost.points,
-        taxesAndFeesUsd: trip.taxesAndFeesUsd ?? existing.originalCost.taxesAndFeesUsd,
-        payments: trip.payments ?? existing.originalCost.payments,
-      },
+      originalCost: mergedOriginal,
       source: FlightSource.Email,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Record a realized rebooking saving when a re-imported confirmation for the
+   * same flight (same date + route) was booked at a LOWER price than the
+   * flight's frozen lifetime-original cost. Savings are always measured against
+   * that original, so re-importing the same lower fare repeatedly does not
+   * double-count: a new event is only recorded when the newly-paid amount is a
+   * fresh low not already captured.
+   */
+  private async maybeRecordRebooking(prior: Flight, trip: RetrievedTrip): Promise<void> {
+    const isPoints = prior.originalCost.purchaseType === PurchaseType.Points;
+    const originalAmount = isPoints ? prior.originalCost.points : prior.originalCost.cashUsd;
+    const newAmount = isPoints ? trip.paidPoints : trip.paidCashUsd;
+    if (originalAmount == null || newAmount == null) return;
+    if (!Number.isFinite(originalAmount) || !Number.isFinite(newAmount)) return;
+    // Only a price DROP is a saving.
+    if (newAmount >= originalAmount) return;
+
+    // Avoid double-counting: skip if we've already recorded an event for this
+    // flight at this (or a lower) new amount.
+    const existingEvents = await this.deps.rebookEvents.listByFlight(prior.id);
+    const alreadyLower = existingEvents.some(
+      (e) => Math.round(e.newAmount) <= Math.round(newAmount),
+    );
+    if (alreadyLower) return;
+
+    const pointValueCents = this.deps.settings.get().pointValueCents;
+    const savedNative = originalAmount - newAmount;
+    const pointsSaved = isPoints ? savedNative : undefined;
+    const cashSavedUsd = isPoints ? undefined : savedNative;
+    const estimatedValueUsd = isPoints ? (savedNative * pointValueCents) / 100 : savedNative;
+
+    const event: RebookEvent = {
+      id: generateId('rbk'),
+      flightId: prior.id,
+      passengerId: prior.passengerId,
+      confirmationNumber: trip.confirmationNumber || prior.confirmationNumber,
+      routeLabel: `${prior.route.origin.code} → ${prior.route.destination.code}`,
+      departureDate: (trip.departureDateTime || prior.departureDateTime).slice(0, 10),
+      purchaseType: prior.originalCost.purchaseType,
+      originalAmount,
+      newAmount,
+      pointsSaved,
+      cashSavedUsd,
+      estimatedValueUsd,
+      pointValueCents,
+      recordedAt: new Date().toISOString(),
+    };
+    await this.deps.rebookEvents.append(event);
+    log.info('Recorded rebooking saving', {
+      flightId: prior.id,
+      confirmation: event.confirmationNumber,
+      purchaseType: event.purchaseType,
+      originalAmount,
+      newAmount,
+      estimatedValueUsd,
+    });
   }
 
   private async createFlightFromEmailTrip(passengerId: string, trip: RetrievedTrip): Promise<Flight> {
@@ -645,6 +734,7 @@ export class AppService {
 
   async deleteFlight(id: string): Promise<void> {
     await this.deps.priceHistory.deleteForFlight(id);
+    await this.deps.rebookEvents.deleteForFlight(id);
     await this.deps.flights.delete(id);
   }
 
@@ -820,6 +910,75 @@ export class AppService {
       profileDir: this.deps.scraperProfileDir,
     });
     return client.warmupProfile();
+  }
+
+  // --- Reporting -----------------------------------------------------------
+
+  /**
+   * Aggregate every recorded rebooking saving into all-time / per-month /
+   * per-year buckets plus a per-event breakdown for the Reporting blade.
+   */
+  async getSavingsReport(): Promise<SavingsReport> {
+    const events = await this.deps.rebookEvents.list();
+    const passengers = await this.deps.passengers.list();
+    const nameById = new Map(passengers.map((p) => [p.id, p.fullName]));
+
+    const monthBuckets = new Map<string, SavingsBucket>();
+    const yearBuckets = new Map<string, SavingsBucket>();
+    const allTime = emptyBucket('all', 'All time');
+
+    const accumulate = (bucket: SavingsBucket, e: RebookEvent): void => {
+      bucket.rebookings += 1;
+      bucket.pointsSaved += e.pointsSaved ?? 0;
+      bucket.cashSavedUsd += e.cashSavedUsd ?? 0;
+      if (e.purchaseType === PurchaseType.Points) bucket.pointsValueUsd += e.estimatedValueUsd;
+      bucket.totalValueUsd += e.estimatedValueUsd;
+    };
+
+    const views: RebookEventView[] = [];
+    for (const e of events) {
+      const date = new Date(e.recordedAt);
+      const valid = !Number.isNaN(date.getTime());
+      const monthKey = valid
+        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        : 'unknown';
+      const yearKey = valid ? String(date.getFullYear()) : 'unknown';
+
+      const monthBucket =
+        monthBuckets.get(monthKey) ?? emptyBucket(monthKey, monthLabel(date, valid));
+      accumulate(monthBucket, e);
+      monthBuckets.set(monthKey, monthBucket);
+
+      const yearBucket = yearBuckets.get(yearKey) ?? emptyBucket(yearKey, valid ? yearKey : 'Unknown');
+      accumulate(yearBucket, e);
+      yearBuckets.set(yearKey, yearBucket);
+
+      accumulate(allTime, e);
+
+      views.push({
+        id: e.id,
+        flightId: e.flightId,
+        passengerName: nameById.get(e.passengerId) ?? 'Unknown',
+        confirmationNumber: e.confirmationNumber,
+        routeLabel: e.routeLabel,
+        departureDate: e.departureDate,
+        purchaseType: e.purchaseType,
+        originalAmount: e.originalAmount,
+        newAmount: e.newAmount,
+        pointsSaved: e.pointsSaved,
+        cashSavedUsd: e.cashSavedUsd,
+        estimatedValueUsd: e.estimatedValueUsd,
+        recordedAt: e.recordedAt,
+      });
+    }
+
+    const byKeyDesc = (a: SavingsBucket, b: SavingsBucket): number => b.key.localeCompare(a.key);
+    return {
+      allTime,
+      byMonth: [...monthBuckets.values()].sort(byKeyDesc),
+      byYear: [...yearBuckets.values()].sort(byKeyDesc),
+      events: views,
+    };
   }
 
   // --- internals -----------------------------------------------------------
