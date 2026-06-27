@@ -67,6 +67,7 @@ export class PriceCheckService {
         destination: flight.route.destination.code,
         departureDate,
         preferred: flight.originalCost.purchaseType,
+        preferredDepartureTime: flight.departureDateTime,
       },
       session,
     );
@@ -91,18 +92,26 @@ export class PriceCheckService {
     const originalMs = Date.parse(flight.departureDateTime);
     const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
 
-    const scored = results
-      .map((r) => {
-        const diffMin = Number.isNaN(originalMs)
-          ? 0
-          : Math.abs(Date.parse(r.departureDateTime) - originalMs) / 60_000;
-        const price = isPoints ? r.points ?? Number.MAX_SAFE_INTEGER : r.cashUsd ?? Number.MAX_SAFE_INTEGER;
-        return { r, diffMin, price };
-      })
-      .filter((s) => Number.isNaN(originalMs) || s.diffMin <= toleranceMinutes);
+    const scored = results.map((r) => {
+      const diffMin = Number.isNaN(originalMs)
+        ? 0
+        : Math.abs(Date.parse(r.departureDateTime) - originalMs) / 60_000;
+      const price = isPoints ? r.points ?? Number.MAX_SAFE_INTEGER : r.cashUsd ?? Number.MAX_SAFE_INTEGER;
+      return { r, diffMin, price };
+    });
 
-    if (scored.length === 0) return results[0];
+    const within = scored.filter((s) => Number.isNaN(originalMs) || s.diffMin <= toleranceMinutes);
 
+    // Inside the tolerance window: closest departure first, cheapest as tiebreak.
+    if (within.length > 0) {
+      within.sort((a, b) => a.diffMin - b.diffMin || a.price - b.price);
+      return within[0]!.r;
+    }
+
+    // No option near the booked time of day. Fall back to the CLOSEST departure
+    // by time rather than an arbitrary first result, so the "current price"
+    // tracks the booked flight's time of day instead of, say, a cheap red-eye
+    // many hours away (which produced false "rebook" signals).
     scored.sort((a, b) => a.diffMin - b.diffMin || a.price - b.price);
     return scored[0]!.r;
   }

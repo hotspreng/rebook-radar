@@ -2,6 +2,19 @@ import { RetrievedTrip } from '../providers/AirlineProvider.js';
 import { EmailMessage } from './EmailMessage.js';
 import { ParsedTripEvent, TripEventType } from './TripEvent.js';
 import { parseSouthwestEmail } from './southwestEmailParsing.js';
+import { isUnitedEmail, parseUnitedEmail } from './unitedEmailParsing.js';
+
+/**
+ * Parse a single confirmation email into a trip event, dispatching to the
+ * right airline parser by sender. United receipts/notifications come from
+ * `@united.com`; everything else is treated as Southwest.
+ */
+function parseAirlineEmail(message: EmailMessage): ParsedTripEvent | undefined {
+  return isUnitedEmail(message.from)
+    ? parseUnitedEmail(message)
+    : parseSouthwestEmail(message);
+}
+
 
 /** Result of folding a batch of Southwest emails into current trip state. */
 export interface EmailImportResult {
@@ -66,7 +79,7 @@ export class EmailTripImportService {
 
     const events: ParsedTripEvent[] = [];
     for (const message of messages) {
-      const event = parseSouthwestEmail(message);
+      const event = parseAirlineEmail(message);
       if (event) events.push(event);
     }
 

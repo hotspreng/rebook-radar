@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { PurchaseType, Recommendation } from '@swr/core';
-import type { EmailImportProgress, Flight, FlightWithComparison, SavingsReport } from '@shared/dto';
+import { AIRLINE_LABELS, PurchaseType, Recommendation } from '@swr/core';
+import type { EmailImportProgress, Flight, FlightWithComparison, PriceCheckProgress, SavingsReport } from '@shared/dto';
 import {
   ArrowRight,
   ChevronRight,
@@ -30,22 +30,91 @@ function importProgressLabel(p: EmailImportProgress): string {
   return `Done · ${p.scanned} email${p.scanned === 1 ? '' : 's'} scanned${trips}`;
 }
 
+/** One-line live status for an in-flight "check all prices" sweep. */
+function priceCheckProgressLabel(p: PriceCheckProgress): string {
+  const rebook =
+    p.rebookFound > 0 ? ` · ${p.rebookFound} to rebook` : '';
+  if (p.phase === 'checking') return `Checking ${p.checked}/${p.total} flight${p.total === 1 ? '' : 's'}…${rebook}`;
+  return `Done · ${p.checked} checked${rebook}`;
+}
+
 /**
- * The most recent price movement for a flight: the delta (in native units)
- * between the two latest recorded prices, plus when the prior price was seen.
- * History only records on a change, so the last two entries always differ.
+ * The most recent price movement for a flight, derived from the REAL market
+ * signal rather than the stored (possibly re-estimated) amount.
+ *
+ * For points bookings the displayed points are usually ESTIMATED from the cash
+ * fare via a conversion rate, so a change in that rate would otherwise look like
+ * a price move. To avoid that, we recompute each history entry's points from its
+ * own recorded cash fare using the flight's implied rate (original points ÷
+ * actual cash at booking) whenever that actual cash value is available. This
+ * makes the trend track genuine cash movement, not estimation noise.
+ *
+ * Walks back from the latest entry to the most recent one whose price actually
+ * differs. If none differ, the fare has held steady → 'flat' ("no change"),
+ * dated from the start of the current run.
  */
 function getPriceTrend(
   item: FlightWithComparison,
-): { deltaNative: number; sinceIso: string; up: boolean } | undefined {
+):
+  | { kind: 'move'; deltaNative: number; sinceIso: string; up: boolean }
+  | { kind: 'flat'; sinceIso: string }
+  | undefined {
   const h = item.priceHistory;
-  if (!h || h.length < 2) return undefined;
-  const last = h[h.length - 1]!;
-  const prev = h[h.length - 2]!;
-  if (last.amount == null || prev.amount == null) return undefined;
-  const delta = last.amount - prev.amount;
-  if (delta === 0) return undefined;
-  return { deltaNative: delta, sinceIso: prev.recordedAt, up: delta > 0 };
+  // A single recorded price is the baseline import: show it as "no change
+  // since <import date>" rather than hiding the trend entirely.
+  if (!h || h.length === 0) return undefined;
+
+  const isPoints = item.flight.originalCost.purchaseType === PurchaseType.Points;
+  const originalPoints = item.flight.originalCost.points;
+  const actualCash = item.flight.originalMarketCashUsd;
+  // Flight-specific points-to-cash rate from the actual booking, when known.
+  const useImpliedRate =
+    isPoints && originalPoints != null && actualCash != null && actualCash > 0;
+
+  // The comparable price for an entry, normalized to remove estimation-rate
+  // noise: recomputed points for points bookings with a known actual cash rate,
+  // otherwise the stored amount.
+  const priceOf = (e: (typeof h)[number]): number | undefined => {
+    if (useImpliedRate && e.cashUsd != null) {
+      return Math.round((originalPoints! * e.cashUsd) / actualCash!);
+    }
+    return e.amount ?? undefined;
+  };
+
+  const latest = h[h.length - 1]!;
+  const latestPrice = priceOf(latest);
+  if (latestPrice == null) return undefined;
+  const eq = (a: number, b: number): boolean =>
+    Math.round(a * 100) === Math.round(b * 100);
+
+  // Find the most recent earlier entry whose normalized price differs.
+  let prevIdx = -1;
+  for (let i = h.length - 2; i >= 0; i--) {
+    const p = priceOf(h[i]!);
+    if (p == null) continue;
+    if (!eq(p, latestPrice)) {
+      prevIdx = i;
+      break;
+    }
+  }
+
+  if (prevIdx === -1) {
+    // No genuine movement on record: price has held at the current level since
+    // the start of the trailing run of equal prices.
+    let runStart = h.length - 1;
+    for (let i = h.length - 2; i >= 0; i--) {
+      const p = priceOf(h[i]!);
+      if (p == null) continue;
+      if (eq(p, latestPrice)) runStart = i;
+      else break;
+    }
+    return { kind: 'flat', sinceIso: h[runStart]!.recordedAt };
+  }
+
+  const prevPrice = priceOf(h[prevIdx]!)!;
+  const delta = latestPrice - prevPrice;
+  if (delta === 0) return { kind: 'flat', sinceIso: h[prevIdx]!.recordedAt };
+  return { kind: 'move', deltaNative: delta, sinceIso: h[prevIdx]!.recordedAt, up: delta > 0 };
 }
 
 export function Dashboard(): JSX.Element {
@@ -81,6 +150,7 @@ export function Dashboard(): JSX.Element {
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<EmailImportProgress | null>(null);
+  const [checkProgress, setCheckProgress] = useState<PriceCheckProgress | null>(null);
   const [savings, setSavings] = useState<SavingsReport['allTime'] | null>(null);
 
   // Realized rebooking savings (all-time totals) for the summary cards. Loaded
@@ -104,6 +174,20 @@ export function Dashboard(): JSX.Element {
       if (e.phase === 'done') {
         window.setTimeout(
           () => setImportProgress((cur) => (cur?.phase === 'done' ? null : cur)),
+          5000,
+        );
+      }
+    });
+  }, []);
+
+  // Live price-check progress streamed from the main process (flights checked).
+  // Auto-clears a few seconds after the sweep finishes.
+  useEffect(() => {
+    return api.onPriceCheckProgress((e) => {
+      setCheckProgress(e);
+      if (e.phase === 'done') {
+        window.setTimeout(
+          () => setCheckProgress((cur) => (cur?.phase === 'done' ? null : cur)),
           5000,
         );
       }
@@ -202,6 +286,7 @@ export function Dashboard(): JSX.Element {
 
   async function handleCheckAll(): Promise<void> {
     setCheckingAll(true);
+    setCheckProgress({ phase: 'checking', checked: 0, total: 0, rebookFound: 0 });
     await checkAll();
     setCheckingAll(false);
   }
@@ -287,9 +372,16 @@ export function Dashboard(): JSX.Element {
           <Button variant="secondary" onClick={handleExport}>
             <Download size={16} /> Export CSV
           </Button>
-          <Button variant="secondary" onClick={handleCheckAll} disabled={checkingAll}>
-            <RefreshCw size={16} className={checkingAll ? 'animate-spin' : ''} /> Check all prices
-          </Button>
+          <div className="relative">
+            <Button variant="secondary" onClick={handleCheckAll} disabled={checkingAll}>
+              <RefreshCw size={16} className={checkingAll ? 'animate-spin' : ''} /> Check all prices
+            </Button>
+            {checkProgress && (
+              <span className="absolute left-0 top-full mt-1 whitespace-nowrap text-[11px] text-slate-400">
+                {priceCheckProgressLabel(checkProgress)}
+              </span>
+            )}
+          </div>
           <Button
             onClick={() => {
               setEditing(undefined);
@@ -421,6 +513,9 @@ export function Dashboard(): JSX.Element {
                           <ArrowRight size={13} className="text-slate-500" />
                           {item.flight.route.destination.code}
                         </span>
+                        <span className="mt-0.5 block text-[11px] text-slate-500">
+                          {AIRLINE_LABELS[item.flight.airline] ?? item.flight.airline}
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-slate-400">
                         {formatDateTime(item.flight.departureDateTime)}
@@ -530,27 +625,29 @@ export function Dashboard(): JSX.Element {
                             {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
                               <span className="ml-1 text-[10px] text-slate-500">est.</span>
                             )}
-                            {canExpand && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleExpanded(item.flight.id);
-                                }}
-                                className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/25"
-                                aria-expanded={isOpen}
-                                title={`Show ${cheaper.length} cheaper same-day option${cheaper.length > 1 ? 's' : ''}`}
-                              >
-                                <ChevronRight
-                                  size={11}
-                                  className={`transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                                />
-                                {cheaper.length} cheaper
-                              </button>
-                            )}
                             {isPoints && item.quote?.cashUsd != null && (
                               <span className="mt-0.5 block text-[11px] text-slate-500">
                                 {formatUsd(item.quote.cashUsd)} cash
                               </span>
+                            )}
+                            {canExpand && (
+                              <div className="mt-1">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleExpanded(item.flight.id);
+                                  }}
+                                  className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/25"
+                                  aria-expanded={isOpen}
+                                  title={`Show ${cheaper.length} cheaper same-day option${cheaper.length > 1 ? 's' : ''}`}
+                                >
+                                  <ChevronRight
+                                    size={11}
+                                    className={`transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                                  />
+                                  {cheaper.length} cheaper
+                                </button>
+                              </div>
                             )}
                           </>
                         )}
@@ -607,6 +704,16 @@ export function Dashboard(): JSX.Element {
                           const trend = getPriceTrend(item);
                           if (!trend) {
                             return <span className="text-[11px] text-slate-600">—</span>;
+                          }
+                          if (trend.kind === 'flat') {
+                            return (
+                              <div className="flex flex-col items-end">
+                                <span className="text-[11px] text-slate-400">no change</span>
+                                <span className="mt-0.5 text-[10px] text-slate-500">
+                                  since {formatDate(trend.sinceIso)}
+                                </span>
+                              </div>
+                            );
                           }
                           return (
                             <div className="flex flex-col items-end">

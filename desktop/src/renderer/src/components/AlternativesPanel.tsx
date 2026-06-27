@@ -6,17 +6,19 @@ type Alternatives = NonNullable<FlightWithComparison['quote']>['alternatives'];
 type Alternative = NonNullable<Alternatives>[number];
 
 /**
- * Same-day departure options priced below the matched/current option,
- * excluding the matched departure itself.
+ * Same-day departure options priced below what the traveler ORIGINALLY PAID,
+ * excluding the matched departure itself. Using the paid amount as the baseline
+ * keeps the "N cheaper" badge consistent with the "vs paid" column shown in the
+ * expanded panel (which also compares against the paid amount).
  */
 export function getCheaperAlternatives(item: FlightWithComparison): Alternative[] {
   const isPoints = item.flight.originalCost.purchaseType === PurchaseType.Points;
-  const currentAmount = item.comparison?.currentAmount;
+  const paidAmount = item.comparison?.originalAmount;
   const alternatives = item.quote?.alternatives ?? [];
   return alternatives.filter((a) => {
     const price = isPoints ? a.points : a.cashUsd;
     if (price == null) return false;
-    if (currentAmount != null && price >= currentAmount) return false;
+    if (paidAmount != null && price >= paidAmount) return false;
     return a.departureDateTime !== item.quote?.departureDateTime;
   });
 }

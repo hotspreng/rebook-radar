@@ -61,6 +61,7 @@ export const IPC = {
   evtAlert: 'event:alert',
   evtMonitorStatus: 'event:monitorStatus',
   evtEmailImportProgress: 'event:emailImportProgress',
+  evtPriceCheckProgress: 'event:priceCheckProgress',
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

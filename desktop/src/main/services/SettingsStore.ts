@@ -1,8 +1,13 @@
 import type { AppConfig } from '@swr/core';
+import { Airline } from '@swr/core';
 import type { AppSettings } from '../../shared/dto.js';
 import { execute, queryOne } from '../database/db.js';
 
 const SETTINGS_KEY = 'app';
+
+/** The Points Guy's published valuation for United MileagePlus miles (~1.35¢),
+ *  used as the default United rate when no prior per-airline value exists. */
+const DEFAULT_UNITED_POINT_VALUE_CENTS = 1.35;
 
 /** Persists user-editable settings as a single JSON row. */
 export class SettingsStore {
@@ -11,6 +16,10 @@ export class SettingsStore {
   private defaultSettings(): AppSettings {
     return {
       pointValueCents: this.defaults.defaultPointValueCents,
+      pointValueCentsByAirline: {
+        [Airline.Southwest]: this.defaults.defaultPointValueCents,
+        [Airline.United]: DEFAULT_UNITED_POINT_VALUE_CENTS,
+      },
       pollIntervalMinutes: this.defaults.pollIntervalMinutes,
       savingsAlertThresholdUsd: this.defaults.savingsAlertThresholdUsd,
       savingsAlertThresholdPoints: this.defaults.savingsAlertThresholdPoints,
@@ -40,7 +49,16 @@ export class SettingsStore {
     if (!Array.isArray(parsed.serpApiKeys) && typeof parsed.serpApiConfigured === 'boolean') {
       parsed.serpApiKeys = [parsed.serpApiConfigured, false, false];
     }
-    return { ...this.defaultSettings(), ...parsed };
+    const merged = { ...this.defaultSettings(), ...parsed };
+    // Migrate the legacy single global rate into per-airline rates: keep the
+    // user's existing rate for Southwest, seed United with TPG's valuation.
+    if (!parsed.pointValueCentsByAirline) {
+      merged.pointValueCentsByAirline = {
+        [Airline.Southwest]: parsed.pointValueCents ?? this.defaults.defaultPointValueCents,
+        [Airline.United]: DEFAULT_UNITED_POINT_VALUE_CENTS,
+      };
+    }
+    return merged;
   }
 
   update(partial: Partial<AppSettings>): AppSettings {

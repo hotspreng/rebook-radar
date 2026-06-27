@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS flights (
   id TEXT PRIMARY KEY,
   passenger_id TEXT NOT NULL,
   account_id TEXT,
+  airline TEXT NOT NULL DEFAULT 'southwest',
   confirmation_number TEXT NOT NULL,
   origin_code TEXT NOT NULL,
   origin_name TEXT,
@@ -118,4 +119,5 @@ export const MIGRATIONS: { table: string; column: string; ddl: string }[] = [
   { table: 'flights', column: 'segments_json', ddl: 'ALTER TABLE flights ADD COLUMN segments_json TEXT' },
   { table: 'flights', column: 'payments_json', ddl: 'ALTER TABLE flights ADD COLUMN payments_json TEXT' },
   { table: 'flights', column: 'original_market_cash_usd', ddl: 'ALTER TABLE flights ADD COLUMN original_market_cash_usd REAL' },
+  { table: 'flights', column: 'airline', ddl: "ALTER TABLE flights ADD COLUMN airline TEXT NOT NULL DEFAULT 'southwest'" },
 ];

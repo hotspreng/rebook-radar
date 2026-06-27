@@ -1,4 +1,4 @@
-import { FareType, PaymentMethod, PurchaseType } from '../models/common.js';
+import { Airline, FareType, PaymentMethod, PurchaseType } from '../models/common.js';
 import {
   RetrievedFlightSegment,
   RetrievedTrip,
@@ -178,6 +178,7 @@ function parseTripDetails(
   return {
     confirmationNumber,
     passengerNames,
+    airline: Airline.Southwest,
     origin: first?.origin ?? '',
     destination: first?.destination ?? '',
     departureDateTime: first?.departureDateTime ?? '',

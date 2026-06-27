@@ -1,5 +1,5 @@
 import { AccountCredentials } from '../models/Account.js';
-import { FareType, IsoDate, PaymentMethod, PurchaseType } from '../models/common.js';
+import { Airline, FareType, IsoDate, PaymentMethod, PurchaseType } from '../models/common.js';
 
 /** One operated segment within a retrieved direction (between connections). */
 export interface RetrievedFlightSegment {
@@ -15,6 +15,8 @@ export interface RetrievedFlightSegment {
 
 /** A trip retrieved from an airline account ("My Trips"). */
 export interface RetrievedTrip {
+  /** Airline this trip is booked on, when known. */
+  airline?: Airline;
   confirmationNumber: string;
   passengerNames: string[];
   origin: string;
@@ -77,6 +79,14 @@ export interface FlightSearchQuery {
   passengers?: number;
   /** Which price the caller cares about; providers may return both anyway. */
   preferred?: PurchaseType;
+  /**
+   * The booked flight's local departure time (ISO). When set, providers should
+   * ensure a fare near this time is returned — e.g. by falling back to a deep
+   * search when the fast/cached path only surfaces unrelated departures (such
+   * as nonstops when the booking was a connection) — so the price comparison
+   * tracks the same flight the traveler holds.
+   */
+  preferredDepartureTime?: string;
 }
 
 /** A single priced flight option returned by a search. */

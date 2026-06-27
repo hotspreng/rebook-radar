@@ -125,6 +125,97 @@ test('falls back to deep_search when the fast query returns no results', async (
   assert.ok(urls[1]!.includes('deep_search=true'));
 });
 
+test('deep-searches when the fast path has no fare near the booked departure time', async () => {
+  const urls: string[] = [];
+  const sut = provider(async (url) => {
+    urls.push(url);
+    if (!url.includes('deep_search=true')) {
+      // Fast path: only a morning nonstop — far from the booked 7:40pm flight.
+      return {
+        best_flights: [
+          {
+            price: 254,
+            flights: [
+              {
+                airline: 'Southwest',
+                departure_airport: { id: 'ROC', time: '2026-10-08 06:10' },
+                arrival_airport: { id: 'MDW', time: '2026-10-08 07:50' },
+              },
+            ],
+          },
+        ],
+      };
+    }
+    // Deep search reproduces the browser, including the booked evening flight.
+    return {
+      best_flights: [
+        {
+          price: 254,
+          flights: [
+            {
+              airline: 'Southwest',
+              departure_airport: { id: 'ROC', time: '2026-10-08 06:10' },
+              arrival_airport: { id: 'MDW', time: '2026-10-08 07:50' },
+            },
+          ],
+        },
+        {
+          price: 343,
+          flights: [
+            {
+              airline: 'Southwest',
+              departure_airport: { id: 'ROC', time: '2026-10-08 19:40' },
+              arrival_airport: { id: 'MDW', time: '2026-10-08 21:19' },
+            },
+          ],
+        },
+      ],
+    };
+  });
+
+  const results = await sut.searchPrice({
+    ...QUERY,
+    preferredDepartureTime: '2026-10-08T19:40',
+  });
+  // Both the fast nonstop and the deep-search evening flight are returned.
+  assert.equal(results.length, 2);
+  assert.ok(results.some((r) => r.departureDateTime === '2026-10-08T19:40'));
+  // It actually retried with a deep search to surface the booked time.
+  assert.equal(urls.length, 2);
+  assert.ok(!urls[0]!.includes('deep_search'));
+  assert.ok(urls[1]!.includes('deep_search=true'));
+});
+
+test('skips the deep search when the fast path already covers the booked time', async () => {
+  const urls: string[] = [];
+  const sut = provider(async (url) => {
+    urls.push(url);
+    return {
+      best_flights: [
+        {
+          price: 343,
+          flights: [
+            {
+              airline: 'Southwest',
+              departure_airport: { id: 'ROC', time: '2026-10-08 19:40' },
+              arrival_airport: { id: 'MDW', time: '2026-10-08 21:19' },
+            },
+          ],
+        },
+      ],
+    };
+  });
+
+  const results = await sut.searchPrice({
+    ...QUERY,
+    preferredDepartureTime: '2026-10-08T19:40',
+  });
+  assert.equal(results.length, 1);
+  // A near-time fare was present, so no costly deep search was needed.
+  assert.equal(urls.length, 1);
+  assert.ok(!urls[0]!.includes('deep_search'));
+});
+
 test('rotates to the next key when one runs out of searches', async () => {
   const usedKeys: string[] = [];
   const sut = new GoogleFlightsSerpApiProvider({

@@ -76,6 +76,7 @@ export class PricingComparisonService {
 
     // Resolve the current amount in the SAME unit as the original purchase.
     const { currentAmount, currentValueUsd } = this.resolveCurrent(
+      flight,
       isPoints,
       quote,
       pointValueCents,
@@ -114,14 +115,13 @@ export class PricingComparisonService {
   }
 
   private resolveCurrent(
+    flight: Flight,
     isPoints: boolean,
     quote: PriceQuote,
     pointValueCents: number,
   ): { currentAmount: number; currentValueUsd: number } {
     if (isPoints) {
-      // Prefer a real points quote; fall back to converting the cash quote.
-      const currentPoints =
-        quote.points ?? (quote.cashUsd != null ? usdToPoints(quote.cashUsd, pointValueCents) : 0);
+      const currentPoints = this.estimateCurrentPoints(flight, quote, pointValueCents);
       const taxes = quote.pointsTaxesAndFeesUsd ?? 0;
       return {
         currentAmount: currentPoints,
@@ -131,6 +131,38 @@ export class PricingComparisonService {
     const currentCash =
       quote.cashUsd ?? (quote.points != null ? pointsToUsd(quote.points, pointValueCents) : 0);
     return { currentAmount: round2(currentCash), currentValueUsd: round2(currentCash) };
+  }
+
+  /**
+   * Estimate how many Rapid Rewards points the flight would cost right now.
+   *
+   * For a points booking where we captured the ACTUAL cash fare at booking
+   * (originalMarketCashUsd — only recorded for purchases made within ~24h), the
+   * booking itself reveals THIS flight's real points-to-cash conversion
+   * (originalPoints ÷ actualCash). We anchor on that flight-specific rate rather
+   * than the generic settings cents-per-point estimate:
+   *   - current cash ≥ the cash at booking → points unchanged (no savings).
+   *   - current cash <  the cash at booking → points drop proportionally.
+   * This prevents the generic rate from inflating the points estimate (and
+   * showing a phantom increase) when the cash fare has actually fallen.
+   *
+   * Without a captured actual cash fare, fall back to a real points quote, then
+   * to converting the cash quote at the generic settings rate.
+   */
+  private estimateCurrentPoints(
+    flight: Flight,
+    quote: PriceQuote,
+    pointValueCents: number,
+  ): number {
+    const originalPoints = flight.originalCost.points ?? 0;
+    const actualCash = flight.originalMarketCashUsd;
+    if (actualCash != null && actualCash > 0 && originalPoints > 0 && quote.cashUsd != null) {
+      if (quote.cashUsd >= actualCash) return originalPoints;
+      return Math.round((originalPoints * quote.cashUsd) / actualCash);
+    }
+    if (quote.points != null) return quote.points;
+    if (quote.cashUsd != null) return usdToPoints(quote.cashUsd, pointValueCents);
+    return 0;
   }
 
   private buildRationale(args: {

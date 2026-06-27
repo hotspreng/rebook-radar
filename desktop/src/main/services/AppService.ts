@@ -1,4 +1,6 @@
 import {
+  AIRLINE_LABELS,
+  Airline,
   AirlineProvider,
   EmailTripImportService,
   FakeSouthwestScraperClient,
@@ -7,6 +9,7 @@ import {
   PriceCheckService,
   PricingComparisonService,
   PurchaseType,
+  Recommendation,
   SouthwestProvider,
   estimatePointsFromCash,
   exportFlightsToCsv,
@@ -17,6 +20,8 @@ import {
   type AccountCredentials,
   type AccountRepository,
   type AppConfig,
+  type EmailMessage,
+  type EmailMessageSource,
   type ExportRow,
   type Flight,
   type FlightRepository,
@@ -37,7 +42,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PriceCheckProgress, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { PlaywrightSouthwestClient } from '../scraping/PlaywrightSouthwestClient.js';
 import { GmailMessageSource } from '../email/GmailMessageSource.js';
@@ -166,6 +171,8 @@ export interface AppServiceDeps {
   openExternal: (url: string) => Promise<void>;
   /** Reports live progress while an email import runs (main → renderer). */
   onEmailProgress?: (e: EmailImportProgress) => void;
+  /** Reports live progress while a "check all prices" sweep runs. */
+  onPriceCheckProgress?: (e: PriceCheckProgress) => void;
 }
 
 /**
@@ -367,6 +374,23 @@ export class AppService {
   }
 
   /**
+   * Fetch one airline's transactional emails, falling back to a broader sender
+   * query when the precise sender returns nothing. Capped at 500 per airline so
+   * a high-volume carrier can never crowd another out of a shared result set.
+   */
+  private async fetchTransactional(
+    source: EmailMessageSource,
+    primaryQuery: string,
+    fallbackQuery: string,
+  ): Promise<EmailMessage[]> {
+    let messages = await source.fetchMessages({ query: primaryQuery, maxResults: 500 });
+    if (messages.length === 0) {
+      messages = await source.fetchMessages({ query: fallbackQuery, maxResults: 500 });
+    }
+    return messages;
+  }
+
+  /**
    * Import trips from Gmail confirmation emails. Folds bookings/changes/
    * cancellations per confirmation number, then reconciles against stored
    * flights: new active trips are created, changed ones updated, and cancelled
@@ -380,19 +404,25 @@ export class AppService {
 
     this.deps.onEmailProgress?.({ phase: 'scanning', scanned: 0, tripsFound: 0 });
 
-    // Transactional confirmations/changes/cancellations come ONLY from
-    // southwestairlines@ifly.southwest.com. Anchoring on that sender keeps
-    // marketing mail out entirely so we never manufacture phantom trips.
-    const primaryQuery = 'from:southwestairlines@ifly.southwest.com newer_than:13m';
-
-    let messages = await source.fetchMessages({ query: primaryQuery, maxResults: 500 });
-    if (messages.length === 0) {
-      log.info('Transactional sender query found nothing — retrying broad sender');
-      messages = await source.fetchMessages({
-        query: 'from:southwest.com newer_than:13m',
-        maxResults: 500,
-      });
-    }
+    // Transactional confirmations/changes/cancellations come from a small set of
+    // airline senders. We query each airline SEPARATELY and merge, so a high
+    // volume of one airline's mail can never crowd the other out of a single
+    // capped result set. The fold dispatches each message to the right parser.
+    const southwest = await this.fetchTransactional(
+      source,
+      'from:southwestairlines@ifly.southwest.com newer_than:13m',
+      'from:southwest.com newer_than:13m',
+    );
+    const united = await this.fetchTransactional(
+      source,
+      'from:(Receipts@united.com OR notifications@united.com) newer_than:13m',
+      'from:united.com newer_than:13m',
+    );
+    const messages = [...southwest, ...united];
+    log.info('Fetched transactional emails', {
+      southwest: southwest.length,
+      united: united.length,
+    });
 
     const folded = new EmailTripImportService().fold(messages, { now: new Date() });
     this.deps.onEmailProgress?.({
@@ -569,21 +599,35 @@ export class AppService {
     const original = existing.originalCost;
     const baselineCash = original.cashUsd ?? trip.paidCashUsd;
     const baselinePoints = original.points ?? trip.paidPoints;
+    const mergedCashUsd =
+      trip.originalPaidCashUsd != null
+        ? Math.max(baselineCash ?? 0, trip.originalPaidCashUsd)
+        : baselineCash;
+    const mergedPoints =
+      trip.originalPaidPoints != null
+        ? Math.max(baselinePoints ?? 0, trip.originalPaidPoints)
+        : baselinePoints;
+    // Self-heal a purchase type that disagrees with the recorded amounts. An
+    // earlier price-less import (e.g. a forwarded itinerary) may have stored
+    // the default 'cash' before a later receipt supplied points; trust the
+    // amount that is actually present.
+    let mergedPurchaseType = original.purchaseType;
+    if (mergedCashUsd == null && mergedPoints != null) {
+      mergedPurchaseType = PurchaseType.Points;
+    } else if (mergedPoints == null && mergedCashUsd != null) {
+      mergedPurchaseType = PurchaseType.Cash;
+    }
     const mergedOriginal: Flight['originalCost'] = {
-      purchaseType: original.purchaseType,
+      purchaseType: mergedPurchaseType,
       // Raise the baseline to the fold's surfaced original fare when it is
       // higher. This also corrects a baseline an earlier import stored too low,
       // which happens when the original booking and a cheaper change/rebook
       // arrived in the same import and collapsed to the lower price.
-      cashUsd:
-        trip.originalPaidCashUsd != null
-          ? Math.max(baselineCash ?? 0, trip.originalPaidCashUsd)
-          : baselineCash,
-      points:
-        trip.originalPaidPoints != null
-          ? Math.max(baselinePoints ?? 0, trip.originalPaidPoints)
-          : baselinePoints,
-      taxesAndFeesUsd: original.taxesAndFeesUsd ?? trip.taxesAndFeesUsd ?? 0,
+      cashUsd: mergedCashUsd,
+      points: mergedPoints,
+      // Backfill taxes from the receipt when none were recorded (a price-less
+      // itinerary import stores 0).
+      taxesAndFeesUsd: original.taxesAndFeesUsd || trip.taxesAndFeesUsd || 0,
       payments: original.payments ?? trip.payments,
     };
     return {
@@ -623,6 +667,7 @@ export class AppService {
       routeLabel: `${prior.route.origin.code} → ${prior.route.destination.code}`,
       departureDate: (trip.departureDateTime || prior.departureDateTime).slice(0, 10),
       purchaseType: prior.originalCost.purchaseType,
+      airline: prior.airline,
       originalAmount: isPoints ? prior.originalCost.points : prior.originalCost.cashUsd,
       newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
     });
@@ -645,6 +690,7 @@ export class AppService {
       routeLabel: `${flight.route.origin.code} → ${flight.route.destination.code}`,
       departureDate: (trip.departureDateTime || flight.departureDateTime).slice(0, 10),
       purchaseType: flight.originalCost.purchaseType,
+      airline: flight.airline,
       originalAmount,
       newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
     });
@@ -668,6 +714,7 @@ export class AppService {
       routeLabel: `${flight.route.origin.code} → ${flight.route.destination.code}`,
       departureDate: (trip.departureDateTime || flight.departureDateTime).slice(0, 10),
       purchaseType: flight.originalCost.purchaseType,
+      airline: flight.airline,
       originalAmount: isPoints ? cancelledMatch.paidPoints : cancelledMatch.paidCashUsd,
       newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
     });
@@ -713,6 +760,7 @@ export class AppService {
     routeLabel: string;
     departureDate: string;
     purchaseType: PurchaseType;
+    airline: Airline;
     originalAmount: number | undefined | null;
     newAmount: number | undefined | null;
   }): Promise<void> {
@@ -731,7 +779,7 @@ export class AppService {
     if (alreadyLower) return;
 
     const isPoints = params.purchaseType === PurchaseType.Points;
-    const pointValueCents = this.deps.settings.get().pointValueCents;
+    const pointValueCents = this.pointValueCentsFor(params.airline);
     const savedNative = originalAmount - newAmount;
     const pointsSaved = isPoints ? savedNative : undefined;
     const cashSavedUsd = isPoints ? undefined : savedNative;
@@ -771,6 +819,7 @@ export class AppService {
       id: generateId('flt'),
       passengerId,
       accountId: undefined,
+      airline: trip.airline ?? Airline.Southwest,
       confirmationNumber: trip.confirmationNumber,
       route: {
         origin: { code: trip.origin },
@@ -811,8 +860,8 @@ export class AppService {
     // Don't re-fetch once we've already captured an actual fare.
     if (flight.originalMarketCashUsd != null) return;
     try {
-      const provider = this.createProvider();
-      const options = this.comparisonOptions();
+      const provider = this.createProvider(flight.airline);
+      const options = this.comparisonOptions(flight.airline);
       const result = await this.priceCheck.check(flight, provider, undefined, options);
       const cash = result.quote?.cashUsd;
       if (cash == null || !Number.isFinite(cash)) return;
@@ -872,8 +921,8 @@ export class AppService {
   async checkOne(flightId: string): Promise<FlightWithComparison> {
     const flight = await this.deps.flights.get(flightId);
     if (!flight) throw new Error(`Flight ${flightId} not found.`);
-    const provider = this.createProvider();
-    const options = this.comparisonOptions();
+    const provider = this.createProvider(flight.airline);
+    const options = this.comparisonOptions(flight.airline);
     const result = await this.priceCheck.check(flight, provider, undefined, options);
     await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
     await this.recordPriceHistory(flight.id, result.quote, result.comparison);
@@ -882,21 +931,30 @@ export class AppService {
 
   async checkAll(): Promise<FlightWithComparison[]> {
     const flights = await this.deps.flights.listMonitored();
-    const provider = this.createProvider();
-    const options = this.comparisonOptions();
     const out: FlightWithComparison[] = [];
+
+    const total = flights.length;
+    let checked = 0;
+    let rebookFound = 0;
+    this.deps.onPriceCheckProgress?.({ phase: 'checking', checked, total, rebookFound });
 
     for (const flight of flights) {
       try {
+        const provider = this.createProvider(flight.airline);
+        const options = this.comparisonOptions(flight.airline);
         const result = await this.priceCheck.check(flight, provider, undefined, options);
         await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
         await this.recordPriceHistory(flight.id, result.quote, result.comparison);
+        if (result.comparison?.recommendation === Recommendation.Rebook) rebookFound += 1;
         out.push(await this.toFlightWithComparison(flight, result.quote, result.comparison));
       } catch (err) {
         log.warn('Price check failed for flight', { flightId: flight.id, error: String(err) });
         out.push(await this.toFlightWithComparison(flight));
       }
+      checked += 1;
+      this.deps.onPriceCheckProgress?.({ phase: 'checking', checked, total, rebookFound });
     }
+    this.deps.onPriceCheckProgress?.({ phase: 'done', checked, total, rebookFound });
     return out;
   }
 
@@ -908,11 +966,6 @@ export class AppService {
    */
   async recomputeEstimates(): Promise<FlightWithComparison[]> {
     const flights = await this.deps.flights.listMonitored();
-    const s = this.deps.settings.get();
-    // Estimate award points from the stored cash fare using the same cents-per-
-    // point rate the user values points at (no API call).
-    const estimation = { centsPerPoint: s.pointValueCents / 100 };
-    const options = this.comparisonOptions();
     const out: FlightWithComparison[] = [];
 
     let recomputed = 0;
@@ -925,6 +978,10 @@ export class AppService {
         continue;
       }
 
+      // Estimate award points from the stored cash fare using the airline's
+      // cents-per-point rate the user values points at (no API call).
+      const estimation = { centsPerPoint: this.pointValueCentsFor(flight.airline) / 100 };
+      const options = this.comparisonOptions(flight.airline);
       const reEstimated = {
         ...quote,
         points: estimatePointsFromCash(quote.cashUsd, estimation),
@@ -940,7 +997,6 @@ export class AppService {
       recomputed += 1;
     }
     log.info('Recomputed point estimates', {
-      centsPerPoint: estimation.centsPerPoint,
       flights: flights.length,
       recomputed,
     });
@@ -1112,10 +1168,17 @@ export class AppService {
 
   // --- internals -----------------------------------------------------------
 
-  private comparisonOptions(): PriceCheckOptions {
+  /** The cents-per-point rate to use for a given airline, falling back to the
+   *  legacy global rate when no per-airline value is configured. */
+  private pointValueCentsFor(airline: Airline): number {
+    const s = this.deps.settings.get();
+    return s.pointValueCentsByAirline?.[airline] ?? s.pointValueCents;
+  }
+
+  private comparisonOptions(airline: Airline): PriceCheckOptions {
     const s = this.deps.settings.get();
     return {
-      pointValueCents: s.pointValueCents,
+      pointValueCents: this.pointValueCentsFor(airline),
       savingsThresholdUsd: s.savingsAlertThresholdUsd,
       savingsThresholdPoints: s.savingsAlertThresholdPoints,
       matchToleranceMinutes: 90,
@@ -1123,13 +1186,16 @@ export class AppService {
   }
 
   /** Build the airline provider based on current settings (real vs fake). */
-  private createProvider(): AirlineProvider {
+  private createProvider(airline: Airline = Airline.Southwest): AirlineProvider {
     const s = this.deps.settings.get();
     // Estimate points from a cash fare using the user's cents-per-point rate, so
-    // estimates track Southwest's actual award pricing. Tunable in Settings.
-    const estimation = { centsPerPoint: s.pointValueCents / 100 };
+    // estimates track the airline's actual award pricing. Tunable in Settings.
+    const estimation = { centsPerPoint: this.pointValueCentsFor(airline) / 100 };
     if (s.scrapingEnabled && s.fareSource === 'serpapi') {
       return new GoogleFlightsSerpApiProvider({
+        // Keep only itineraries flown by this flight's airline so a United
+        // price check never matches a cheaper Southwest fare and vice-versa.
+        airlineName: AIRLINE_LABELS[airline],
         fetchJson: async (url) => {
           // SerpApi runs the Google Flights search live, so allow generous time
           // but never hang forever (Node has no default fetch timeout).
@@ -1223,8 +1289,25 @@ export class AppService {
     if (amount == null || !Number.isFinite(amount)) return;
 
     const prev = await this.deps.priceHistory.latest(flightId);
-    // Skip when unchanged (compare to cents/whole-point precision).
-    if (prev?.amount != null && Math.round(prev.amount * 100) === Math.round(amount * 100)) return;
+    // For points bookings whose current price is ESTIMATED from the cash fare,
+    // the points are derived via a conversion rate — so a change in that rate
+    // (e.g. the user retuning cents-per-point, or a logic change) would shift
+    // the stored points without any real market movement. Dedupe on the
+    // observed CASH fare in that case so an estimation change can't create a
+    // phantom price-history entry (and a phantom trend). Otherwise dedupe on the
+    // native amount (real points for scraped award fares, or the cash fare).
+    const estimatedFromCash =
+      comparison.originalPurchaseType === PurchaseType.Points &&
+      quote?.pointsEstimated === true &&
+      quote?.cashUsd != null;
+    if (estimatedFromCash) {
+      if (prev?.cashUsd != null && Math.round(prev.cashUsd * 100) === Math.round(quote!.cashUsd! * 100)) {
+        return;
+      }
+    } else if (prev?.amount != null && Math.round(prev.amount * 100) === Math.round(amount * 100)) {
+      // Skip when unchanged (compare to cents/whole-point precision).
+      return;
+    }
 
     const entry: PriceHistoryEntry = {
       flightId,
@@ -1261,6 +1344,7 @@ export class AppService {
       id: generateId('flt'),
       passengerId,
       accountId,
+      airline: Airline.Southwest,
       confirmationNumber: trip.confirmationNumber,
       route: {
         origin: { code: trip.origin },

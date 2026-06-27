@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Airline,
   FakeSouthwestScraperClient,
   FareType,
   FlightSource,
@@ -25,6 +26,7 @@ import {
 const sampleFlight: Flight = {
   id: 'demo',
   passengerId: 'me',
+  airline: Airline.Southwest,
   confirmationNumber: 'DEMO12',
   route: { origin: { code: 'MDW' }, destination: { code: 'DEN' } },
   departureDateTime: '2026-08-14T09:35:00-05:00',

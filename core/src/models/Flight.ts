@@ -1,4 +1,5 @@
 import {
+  Airline,
   BookingCost,
   FareType,
   FlightSource,
@@ -50,6 +51,9 @@ export interface Flight {
   passengerId: string;
   /** Account the flight was booked under, when known. */
   accountId?: string;
+
+  /** Airline this flight is booked on. Defaults to Southwest for legacy data. */
+  airline: Airline;
 
   confirmationNumber: string;
   route: Route;

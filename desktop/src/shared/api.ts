@@ -11,6 +11,7 @@ import type {
   AppSettings,
   CreateAccountInput,
   EmailImportProgress,
+  PriceCheckProgress,
   EmailImportResult,
   EmailStatus,
   FlightWithComparison,
@@ -94,4 +95,5 @@ export interface SwrApi {
   onAlert(cb: (e: AlertEvent) => void): () => void;
   onMonitorStatus(cb: (s: MonitorStatus) => void): () => void;
   onEmailImportProgress(cb: (e: EmailImportProgress) => void): () => void;
+  onPriceCheckProgress(cb: (e: PriceCheckProgress) => void): () => void;
 }

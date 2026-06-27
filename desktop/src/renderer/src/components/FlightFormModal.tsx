@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import {
+  AIRLINE_LABELS,
+  Airline,
   FareType,
   FlightSource,
   PurchaseType,
@@ -23,6 +25,7 @@ interface Props {
 export function FlightFormModal({ passengers, accounts, existing, onClose, onSaved }: Props): JSX.Element {
   const [passengerId, setPassengerId] = useState(existing?.passengerId ?? passengers[0]?.id ?? '');
   const [accountId, setAccountId] = useState(existing?.accountId ?? '');
+  const [airline, setAirline] = useState<Airline>(existing?.airline ?? Airline.Southwest);
   const [confirmation, setConfirmation] = useState(existing?.confirmationNumber ?? '');
   const [origin, setOrigin] = useState(existing?.route.origin.code ?? '');
   const [destination, setDestination] = useState(existing?.route.destination.code ?? '');
@@ -55,6 +58,7 @@ export function FlightFormModal({ passengers, accounts, existing, onClose, onSav
       const base: NewFlight = {
         passengerId,
         accountId: accountId || undefined,
+        airline,
         confirmationNumber: confirmation.toUpperCase(),
         route: {
           origin: { code: origin.toUpperCase() },
@@ -126,6 +130,15 @@ export function FlightFormModal({ passengers, accounts, existing, onClose, onSav
         </Field>
         <Field label="Confirmation #">
           <input className={inputClass} value={confirmation} onChange={(e) => setConfirmation(e.target.value)} placeholder="ABC123" />
+        </Field>
+        <Field label="Airline">
+          <select className={inputClass} value={airline} onChange={(e) => setAirline(e.target.value as Airline)}>
+            {Object.values(Airline).map((a) => (
+              <option key={a} value={a}>
+                {AIRLINE_LABELS[a]}
+              </option>
+            ))}
+          </select>
         </Field>
         <Field label="Fare type">
           <select className={inputClass} value={fareType} onChange={(e) => setFareType(e.target.value as FareType)}>

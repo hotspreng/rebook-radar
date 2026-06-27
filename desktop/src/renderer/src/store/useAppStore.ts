@@ -113,9 +113,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   async updateSettings(partial) {
     const settings = await api.settings.update(partial);
     set({ settings });
-    // Retuning the cents-per-point rate re-estimates stored cash fares into
-    // points instantly (no API call), so the Dashboard reflects the new rate.
-    if ('pointValueCents' in partial) {
+    // Retuning a cents-per-point rate re-estimates stored cash fares into points
+    // instantly (no API call), so the Dashboard reflects the new rate.
+    if ('pointValueCents' in partial || 'pointValueCentsByAirline' in partial) {
       await api.pricing.recomputeEstimates();
       await get().refreshFlights();
     }

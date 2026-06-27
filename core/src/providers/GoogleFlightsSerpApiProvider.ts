@@ -13,6 +13,15 @@ import { estimatePointsFromCash, PointsEstimationOptions } from './pointsEstimat
 
 export const GOOGLE_FLIGHTS_SERPAPI_PROVIDER_ID = 'google-flights-serpapi';
 
+/**
+ * How close (in minutes) a returned fare must depart to the booked flight's
+ * time for the fast/cached path to be considered to "cover" that booking. When
+ * nothing departs within this window, a deep search is run to reproduce the
+ * browser's full results (so a booked connection isn't missed in favour of the
+ * fast path's nonstops). Matches the price-check matcher's default tolerance.
+ */
+const NEAR_PREFERRED_WINDOW_MIN = 90;
+
 /** Fetches a URL and returns the parsed JSON body. Injected so /core stays
  *  framework-agnostic and unit-testable (desktop passes a `fetch` wrapper). */
 export type JsonFetch = (url: string) => Promise<unknown>;
@@ -130,20 +139,25 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
       let body = first.body;
 
       // Google Flights' fast/cached path sometimes returns nothing for a valid
-      // route+date that genuinely has flights. A deep search reproduces the
-      // browser's results and usually fills the gap, so retry once when empty.
-      if (this.isEmptyResponse(body)) {
-        this.log.info('Fast SerpApi search returned nothing — retrying with deep_search', {
+      // route+date that genuinely has flights — and other times returns only a
+      // subset (e.g. nonstops) that omits the booked itinerary (a connection).
+      // A deep search reproduces the browser's full results, so retry once when
+      // the fast path is empty OR has no fare near the booked departure time.
+      const needsDeepSearch =
+        this.isEmptyResponse(body) || !this.hasFareNearPreferred(body, query);
+      if (needsDeepSearch) {
+        this.log.info('Retrying with deep_search', {
           origin: query.origin,
           destination: query.destination,
           date: query.departureDate,
+          reason: this.isEmptyResponse(body) ? 'empty' : 'no-near-time-match',
         });
         const deep = await this.querySerpApi(query, apiKey, true, i + 1, keys.length);
         if (deep.quota) {
           lastQuotaError = deep.error;
           if (!isLast) continue;
           // No more keys — fall through so the empty body throws a no-results error.
-        } else {
+        } else if (!this.isEmptyResponse(deep.body)) {
           body = deep.body;
         }
       }
@@ -225,6 +239,31 @@ export class GoogleFlightsSerpApiProvider implements AirlineProvider {
     if (body.error) return this.isNoResultsError(body.error);
     const total = (body.best_flights?.length ?? 0) + (body.other_flights?.length ?? 0);
     return total === 0;
+  }
+
+  /**
+   * True when the response contains a matching-airline fare departing close to
+   * the booked flight's time (within {@link NEAR_PREFERRED_WINDOW_MIN}). When
+   * the caller didn't supply a preferred time, always true (no constraint). Used
+   * to decide whether the fast path's results actually cover the booked
+   * itinerary, or a deep search is needed to surface it (e.g. a connection that
+   * the fast/cached path dropped in favour of nonstops).
+   */
+  private hasFareNearPreferred(body: SerpResponse, query: FlightSearchQuery): boolean {
+    const preferred = query.preferredDepartureTime
+      ? Date.parse(query.preferredDepartureTime)
+      : NaN;
+    if (Number.isNaN(preferred)) return true;
+    if (body.error) return false;
+
+    const itineraries = [...(body.best_flights ?? []), ...(body.other_flights ?? [])];
+    return itineraries.some((it) => {
+      const result = this.mapItinerary(it);
+      if (!result) return false;
+      const dep = Date.parse(result.departureDateTime);
+      if (Number.isNaN(dep)) return false;
+      return Math.abs(dep - preferred) / 60_000 <= NEAR_PREFERRED_WINDOW_MIN;
+    });
   }
 
   /** Resolve the ordered list of usable API keys (multi-key takes precedence). */

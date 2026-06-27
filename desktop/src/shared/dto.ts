@@ -1,5 +1,6 @@
 import type {
   Account,
+  Airline,
   Flight,
   NewAccount,
   NewFlight,
@@ -14,12 +15,19 @@ import type {
 /** User-facing settings persisted in the local DB. */
 export interface AppSettings {
   /**
-   * Cents per Rapid Rewards point. Used both to ESTIMATE Southwest award points
-   * from a cash fare (e.g. SerpApi only carries cash) and to value points ↔
-   * dollars in the savings comparison. Southwest's effective award rate runs
-   * ~1.1–1.4¢; tune to match observed award prices.
+   * Legacy / fallback cents-per-point rate. Retained as the default seed and the
+   * value used when an airline has no entry in {@link pointValueCentsByAirline}.
+   * Prefer reading the per-airline rate.
    */
   pointValueCents: number;
+  /**
+   * Cents per point/mile, PER AIRLINE. Used both to ESTIMATE award points from a
+   * cash fare (e.g. SerpApi only carries cash) and to value points ↔ dollars in
+   * the savings comparison. Each program redeems differently — Southwest's award
+   * rate is near-fixed (~1.4¢) while United's is dynamic (~1.35¢) — so they get
+   * independent rates.
+   */
+  pointValueCentsByAirline: Record<Airline, number>;
   pollIntervalMinutes: number;
   savingsAlertThresholdUsd: number;
   savingsAlertThresholdPoints: number;
@@ -111,6 +119,18 @@ export interface EmailImportProgress {
   total?: number;
   /** Active upcoming trips found after parsing, when known. */
   tripsFound?: number;
+}
+
+/** Live progress emitted while a "check all prices" sweep is running. */
+export interface PriceCheckProgress {
+  /** Current stage of the sweep. */
+  phase: 'checking' | 'done';
+  /** Flights price-checked so far. */
+  checked: number;
+  /** Total monitored flights to check. */
+  total: number;
+  /** How many are recommended for rebooking so far. */
+  rebookFound: number;
 }
 
 /** Aggregated rebooking savings for one period (a month, a year, or all-time). */

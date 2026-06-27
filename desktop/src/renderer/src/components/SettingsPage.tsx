@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AppSettings, EmailImportResult, EmailStatus, SerpApiKeyUsage } from '@shared/dto';
+import { Airline } from '@swr/core';
 import { Activity, Mail, Plug, RefreshCw, Save } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore.js';
 import { Button, Card, Field, inputClass } from './ui.js';
@@ -24,6 +25,14 @@ export function SettingsPage(): JSX.Element {
   function setPersist<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
     setDraft((d) => (d ? { ...d, [key]: value } : d));
     void updateSettings({ [key]: value } as Partial<AppSettings>);
+  }
+
+  /** Update one airline's cents-per-point rate and persist immediately. */
+  function setAirlineRate(airline: Airline, value: number): void {
+    if (!draft) return;
+    const next = { ...draft.pointValueCentsByAirline, [airline]: value };
+    setDraft((d) => (d ? { ...d, pointValueCentsByAirline: next } : d));
+    void updateSettings({ pointValueCentsByAirline: next });
   }
 
   async function handleSave(): Promise<void> {
@@ -62,17 +71,31 @@ export function SettingsPage(): JSX.Element {
       <div className="flex-1 space-y-5 overflow-y-auto px-7 py-6">
         <Card className="px-6 py-5">
           <h2 className="mb-4 text-sm font-semibold text-slate-200">Points valuation</h2>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <Field
-              label="Cents per point"
-              hint="Used to estimate award points from a cash fare AND to value points savings. Tune to match Southwest's award prices (≈1.1–1.4¢)."
+              label="Southwest — cents per point"
+              hint="The Points Guy values Southwest Rapid Rewards points at about 1.4¢ each."
             >
               <AwardRateInput
-                value={draft.pointValueCents}
-                onCommit={(v) => setPersist('pointValueCents', v)}
+                value={draft.pointValueCentsByAirline[Airline.Southwest]}
+                onCommit={(v) => setAirlineRate(Airline.Southwest, v)}
+              />
+            </Field>
+            <Field
+              label="United — cents per mile"
+              hint="The Points Guy values United MileagePlus miles at about 1.35¢ each."
+            >
+              <AwardRateInput
+                value={draft.pointValueCentsByAirline[Airline.United]}
+                onCommit={(v) => setAirlineRate(Airline.United, v)}
               />
             </Field>
           </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Used to estimate award points from a cash fare and to value points savings in
+            dollars. Each airline's award program redeems differently, so they're tuned
+            separately.
+          </p>
         </Card>
 
         <Card className="px-6 py-5">

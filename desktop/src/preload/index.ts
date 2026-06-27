@@ -6,6 +6,7 @@ import type {
   AppSettings,
   CreateAccountInput,
   EmailImportProgress,
+  PriceCheckProgress,
   EmailImportResult,
   EmailStatus,
   FlightWithComparison,
@@ -96,6 +97,8 @@ const api: SwrApi = {
   onMonitorStatus: (cb: (s: MonitorStatus) => void) => subscribe(IPC.evtMonitorStatus, cb),
   onEmailImportProgress: (cb: (e: EmailImportProgress) => void) =>
     subscribe(IPC.evtEmailImportProgress, cb),
+  onPriceCheckProgress: (cb: (e: PriceCheckProgress) => void) =>
+    subscribe(IPC.evtPriceCheckProgress, cb),
 };
 
 contextBridge.exposeInMainWorld('swr', api);
