@@ -10,6 +10,34 @@ import type { Credentials, OAuth2Client } from 'google-auth-library';
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 
+/**
+ * Thrown when Gmail rejects the stored refresh token (OAuth `invalid_grant`).
+ * This means the saved authorization is no longer usable — usually because the
+ * refresh token expired (Google expires refresh tokens after 7 days while the
+ * OAuth consent screen is still in "Testing" mode), the user revoked access, or
+ * the account password changed. The only remedy is to reconnect Gmail.
+ */
+export class GmailAuthError extends Error {
+  readonly code = 'GMAIL_AUTH_EXPIRED';
+  constructor(message = 'Gmail authorization is no longer valid.') {
+    super(message);
+    this.name = 'GmailAuthError';
+  }
+}
+
+/** Detects Google's OAuth `invalid_grant` response inside an arbitrary error. */
+export function isInvalidGrantError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const anyErr = err as {
+    message?: unknown;
+    response?: { data?: { error?: unknown } };
+  };
+  const responseError = anyErr.response?.data?.error;
+  if (typeof responseError === 'string' && responseError === 'invalid_grant') return true;
+  return typeof anyErr.message === 'string' && anyErr.message.includes('invalid_grant');
+}
+
+
 export interface GmailMessageSourceOptions {
   clientId: string;
   clientSecret: string;
@@ -181,7 +209,22 @@ export class GmailMessageSource implements EmailMessageSource {
   async fetchMessages(query: EmailQuery): Promise<EmailMessage[]> {
     const client = await this.ensureClient();
     if (!client) throw new Error('Gmail is not connected.');
+    try {
+      return await this.fetchMessagesInternal(client, query);
+    } catch (err) {
+      if (isInvalidGrantError(err)) {
+        throw new GmailAuthError(
+          'Your Gmail connection has expired. Reconnect Gmail in Settings to import trips.',
+        );
+      }
+      throw err;
+    }
+  }
 
+  private async fetchMessagesInternal(
+    client: OAuth2Client,
+    query: EmailQuery,
+  ): Promise<EmailMessage[]> {
     const ids: string[] = [];
     let pageToken: string | undefined;
     const cap = query.maxResults ?? 200;

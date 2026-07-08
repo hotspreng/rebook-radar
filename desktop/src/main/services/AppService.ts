@@ -45,7 +45,7 @@ import { logger } from '@swr/core';
 import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PriceCheckProgress, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { PlaywrightSouthwestClient } from '../scraping/PlaywrightSouthwestClient.js';
-import { GmailMessageSource } from '../email/GmailMessageSource.js';
+import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
 import type { SettingsStore } from './SettingsStore.js';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -408,16 +408,31 @@ export class AppService {
     // airline senders. We query each airline SEPARATELY and merge, so a high
     // volume of one airline's mail can never crowd the other out of a single
     // capped result set. The fold dispatches each message to the right parser.
-    const southwest = await this.fetchTransactional(
-      source,
-      'from:southwestairlines@ifly.southwest.com newer_than:13m',
-      'from:southwest.com newer_than:13m',
-    );
-    const united = await this.fetchTransactional(
-      source,
-      'from:(Receipts@united.com OR notifications@united.com) newer_than:13m',
-      'from:united.com newer_than:13m',
-    );
+    let southwest: EmailMessage[];
+    let united: EmailMessage[];
+    try {
+      southwest = await this.fetchTransactional(
+        source,
+        'from:southwestairlines@ifly.southwest.com newer_than:13m',
+        'from:southwest.com newer_than:13m',
+      );
+      united = await this.fetchTransactional(
+        source,
+        'from:(Receipts@united.com OR notifications@united.com) newer_than:13m',
+        'from:united.com newer_than:13m',
+      );
+    } catch (err) {
+      if (err instanceof GmailAuthError) {
+        // The stored refresh token is dead (expired/revoked). Clear the
+        // connection so the UI prompts a reconnect instead of failing again.
+        await this.deps.secrets
+          .deletePassword(this.gmailSecretKey('refreshToken'))
+          .catch(() => undefined);
+        this.deps.settings.update({ gmailConnected: false });
+        log.warn('Gmail refresh token rejected (invalid_grant) — cleared connection');
+      }
+      throw err;
+    }
     const messages = [...southwest, ...united];
     log.info('Fetched transactional emails', {
       southwest: southwest.length,
