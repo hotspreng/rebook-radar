@@ -1,4 +1,5 @@
 import { PurchaseType, Recommendation } from '@swr/core';
+import type { PriceHistoryEntry } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
 import { ArrowRight, RefreshCw, Pencil, Trash2, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { Button, RecommendationBadge } from './ui.js';
@@ -167,6 +168,7 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
           {item.priceHistory && item.priceHistory.length > 0 && (
             <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
               <h3 className="mb-3 text-sm font-semibold text-slate-200">Price history</h3>
+              <PriceHistoryChart entries={item.priceHistory} type={type} />
               <ol className="space-y-2">
                 {[...item.priceHistory].reverse().map((entry, i, arr) => {
                   const older = arr[i + 1];
@@ -254,6 +256,87 @@ function Row({ label, value, highlight }: { label: string; value: string; highli
     <div className="flex items-center justify-between text-sm">
       <span className="text-slate-400">{label}</span>
       <span className={highlight ? 'font-semibold text-emerald-400' : 'text-slate-200'}>{value}</span>
+    </div>
+  );
+}
+
+function PriceHistoryChart({
+  entries,
+  type,
+}: {
+  entries: PriceHistoryEntry[];
+  type: PurchaseType;
+}): JSX.Element | null {
+  // Oldest-first series of observations that actually carry a price.
+  const points = entries
+    .filter((e) => e.amount != null && Number.isFinite(e.amount))
+    .map((e) => ({ amount: e.amount as number, recordedAt: e.recordedAt }));
+
+  if (points.length < 2) return null;
+
+  const width = 300;
+  const height = 90;
+  const padX = 6;
+  const padY = 10;
+  const amounts = points.map((p) => p.amount);
+  const min = Math.min(...amounts);
+  const max = Math.max(...amounts);
+  const span = max - min;
+
+  const coords = points.map((p, i) => {
+    const x = padX + (i / (points.length - 1)) * (width - padX * 2);
+    const y =
+      span === 0
+        ? height / 2
+        : height - padY - ((p.amount - min) / span) * (height - padY * 2);
+    return { x, y };
+  });
+
+  const firstPoint = points[0];
+  const lastPoint = points[points.length - 1];
+  const firstCoord = coords[0];
+  const lastCoord = coords[coords.length - 1];
+  if (!firstPoint || !lastPoint || !firstCoord || !lastCoord) return null;
+
+  const linePath = coords.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
+  const areaPath = `${linePath} L ${lastCoord.x.toFixed(1)} ${height} L ${firstCoord.x.toFixed(1)} ${height} Z`;
+
+  const first = firstPoint.amount;
+  const last = lastPoint.amount;
+  const down = last < first;
+  const stroke = down ? '#34d399' : last > first ? '#fb7185' : '#94a3b8';
+  const fill = down ? 'rgba(52, 211, 153, 0.12)' : last > first ? 'rgba(251, 113, 133, 0.12)' : 'rgba(148, 163, 184, 0.12)';
+
+  return (
+    <div className="mb-4">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        className="h-24 w-full"
+        role="img"
+        aria-label="Price history line chart"
+      >
+        <path d={areaPath} fill={fill} stroke="none" />
+        <path
+          d={linePath}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+        {coords.map((c, i) => (
+          <circle key={i} cx={c.x} cy={c.y} r={1.8} fill={stroke} />
+        ))}
+      </svg>
+      <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500">
+        <span>{formatDate(firstPoint.recordedAt)}</span>
+        <span>
+          High {formatNative(max, type)} · Low {formatNative(min, type)}
+        </span>
+        <span>{formatDate(lastPoint.recordedAt)}</span>
+      </div>
     </div>
   );
 }

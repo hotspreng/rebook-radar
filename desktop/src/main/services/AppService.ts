@@ -869,7 +869,7 @@ export class AppService {
    */
   private async maybeCaptureBookingPrice(flight: Flight, bookedAt?: number): Promise<void> {
     if (bookedAt == null) return;
-    if (Date.now() - bookedAt > 24 * 60 * 60 * 1000) return;
+    if (Date.now() - bookedAt > 48 * 60 * 60 * 1000) return;
     // Only points bookings show an estimated cash value worth replacing.
     if (flight.originalCost.purchaseType !== PurchaseType.Points) return;
     // Don't re-fetch once we've already captured an actual fare.

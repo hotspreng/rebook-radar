@@ -137,7 +137,7 @@ export class PricingComparisonService {
    * Estimate how many Rapid Rewards points the flight would cost right now.
    *
    * For a points booking where we captured the ACTUAL cash fare at booking
-   * (originalMarketCashUsd — only recorded for purchases made within ~24h), the
+   * (originalMarketCashUsd — only recorded for purchases made within ~48h), the
    * booking itself reveals THIS flight's real points-to-cash conversion
    * (originalPoints ÷ actualCash). We anchor on that flight-specific rate rather
    * than the generic settings cents-per-point estimate:
