@@ -12,6 +12,7 @@ import type {
   FlightWithComparison,
   GmailCredentialsInput,
   MonitorStatus,
+  PriceTrends,
   PriceUpdateEvent,
   SavingsReport,
   SerpApiKeyUsage,
@@ -88,6 +89,7 @@ const api: SwrApi = {
   },
   reporting: {
     savings: () => invoke<SavingsReport>(IPC.reportSavings),
+    priceTrends: () => invoke<PriceTrends>(IPC.reportTrends),
   },
   exportCsv: () => invoke<{ saved: boolean; path?: string }>(IPC.exportCsv),
   openExternal: (url: string) => invoke<void>(IPC.openExternal, url),

@@ -17,6 +17,7 @@ import type {
   FlightWithComparison,
   GmailCredentialsInput,
   MonitorStatus,
+  PriceTrends,
   PriceUpdateEvent,
   SavingsReport,
   SerpApiKeyUsage,
@@ -86,6 +87,7 @@ export interface SwrApi {
   };
   reporting: {
     savings(): Promise<SavingsReport>;
+    priceTrends(): Promise<PriceTrends>;
   };
   exportCsv(): Promise<{ saved: boolean; path?: string }>;
   openExternal(url: string): Promise<void>;

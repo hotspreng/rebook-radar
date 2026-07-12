@@ -121,11 +121,8 @@ export function Dashboard(): JSX.Element {
   const {
     flights,
     passengers,
-    accounts,
     passengerFilter,
-    accountFilter,
     setPassengerFilter,
-    setAccountFilter,
     checkAll,
     checkOne,
     refreshFlights,
@@ -198,10 +195,9 @@ export function Dashboard(): JSX.Element {
     () =>
       flights.filter((f) => {
         if (passengerFilter !== 'all' && f.flight.passengerId !== passengerFilter) return false;
-        if (accountFilter !== 'all' && f.flight.accountId !== accountFilter) return false;
         return true;
       }),
-    [flights, passengerFilter, accountFilter],
+    [flights, passengerFilter],
   );
 
   // Round trips are stored as separate legs sharing a confirmation number. Group
@@ -420,12 +416,6 @@ export function Dashboard(): JSX.Element {
           value={passengerFilter}
           onChange={setPassengerFilter}
           options={[{ value: 'all', label: 'All passengers' }, ...passengers.map((p) => ({ value: p.id, label: p.fullName }))]}
-        />
-        <FilterSelect
-          label="Account"
-          value={accountFilter}
-          onChange={setAccountFilter}
-          options={[{ value: 'all', label: 'All accounts' }, ...accounts.map((a) => ({ value: a.id, label: a.label }))]}
         />
       </div>
 
@@ -804,7 +794,6 @@ export function Dashboard(): JSX.Element {
       {showForm && (
         <FlightFormModal
           passengers={passengers}
-          accounts={accounts}
           existing={editing}
           onClose={() => setShowForm(false)}
           onSaved={refreshFlights}

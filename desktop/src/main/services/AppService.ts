@@ -42,7 +42,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PriceCheckProgress, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { PlaywrightSouthwestClient } from '../scraping/PlaywrightSouthwestClient.js';
 import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
@@ -1178,6 +1178,135 @@ export class AppService {
       byMonth: [...monthBuckets.values()].sort(byKeyDesc),
       byYear: [...yearBuckets.values()].sort(byKeyDesc),
       events: views,
+    };
+  }
+
+  /**
+   * Aggregate every flight's recorded price history into a lead-time curve of
+   * average CASH fares for Southwest and United. Only genuine observed cash
+   * prices are used (PriceHistoryEntry.cashUsd) — points-based prices and
+   * points-to-cash conversions (valueUsd) are excluded, so a change to the
+   * cents-per-point estimate can never move the curve. A points booking still
+   * contributes its observed market cash fare when one was captured. Each
+   * observation is normalized to its own flight's average cash fare (index
+   * 100), so routes of wildly different absolute prices combine into one curve
+   * that reveals how fares move from several months out to right before
+   * departure. Flights with fewer than two cash observations are skipped.
+   */
+  async getPriceTrends(): Promise<PriceTrends> {
+    const bucketDefs: { min: number; days: number; label: string }[] = [
+      { min: 150, days: 165, label: '5+ mo' },
+      { min: 120, days: 135, label: '4 mo' },
+      { min: 90, days: 105, label: '3 mo' },
+      { min: 60, days: 75, label: '2 mo' },
+      { min: 30, days: 45, label: '1 mo' },
+      { min: 21, days: 25, label: '3 wk' },
+      { min: 14, days: 17, label: '2 wk' },
+      { min: 7, days: 10, label: '1 wk' },
+      { min: 3, days: 5, label: '3\u20136 d' },
+      { min: 0, days: 1, label: '0\u20132 d' },
+    ];
+
+    type Acc = {
+      sums: number[];
+      counts: number[];
+      flights: Set<string>;
+      observations: number;
+      volatility: number[];
+    };
+    const newAcc = (): Acc => ({
+      sums: bucketDefs.map(() => 0),
+      counts: bucketDefs.map(() => 0),
+      flights: new Set<string>(),
+      observations: 0,
+      volatility: [],
+    });
+    const acc: Record<'southwest' | 'united', Acc> = {
+      southwest: newAcc(),
+      united: newAcc(),
+    };
+
+    const flights = await this.deps.flights.list();
+    for (const flight of flights) {
+      const dep = new Date(flight.departureDateTime).getTime();
+      if (Number.isNaN(dep)) continue;
+
+      const history = await this.deps.priceHistory.list(flight.id);
+      const obs = history
+        .map((h) => ({ value: h.cashUsd, at: new Date(h.recordedAt).getTime() }))
+        .filter(
+          (o): o is { value: number; at: number } =>
+            o.value != null && Number.isFinite(o.value) && o.value > 0 && !Number.isNaN(o.at),
+        );
+      if (obs.length < 2) continue;
+
+      const mean = obs.reduce((s, o) => s + o.value, 0) / obs.length;
+      if (mean <= 0) continue;
+
+      const key: 'southwest' | 'united' = flight.airline === Airline.United ? 'united' : 'southwest';
+      const a = acc[key];
+      a.flights.add(flight.id);
+
+      // Volatility: absolute % change between consecutive (chronological) prices.
+      for (let i = 1; i < obs.length; i++) {
+        const prev = obs[i - 1];
+        const cur = obs[i];
+        if (!prev || !cur || prev.value <= 0) continue;
+        a.volatility.push((Math.abs(cur.value - prev.value) / prev.value) * 100);
+      }
+
+      for (const o of obs) {
+        const leadDays = (dep - o.at) / 86_400_000;
+        if (leadDays < 0) continue;
+        const bi = bucketDefs.findIndex((b) => leadDays >= b.min);
+        if (bi === -1) continue;
+        a.sums[bi] = (a.sums[bi] ?? 0) + (o.value / mean) * 100;
+        a.counts[bi] = (a.counts[bi] ?? 0) + 1;
+        a.observations += 1;
+      }
+    }
+
+    const buckets: PriceTrendBucket[] = bucketDefs.map((b, i) => {
+      const swCount = acc.southwest.counts[i] ?? 0;
+      const uaCount = acc.united.counts[i] ?? 0;
+      return {
+        daysBefore: b.days,
+        label: b.label,
+        southwestIndex: swCount > 0 ? (acc.southwest.sums[i] ?? 0) / swCount : undefined,
+        unitedIndex: uaCount > 0 ? (acc.united.sums[i] ?? 0) / uaCount : undefined,
+        southwestSamples: swCount,
+        unitedSamples: uaCount,
+      };
+    });
+
+    const summarize = (key: 'southwest' | 'united'): AirlineTrendSummary => {
+      const a = acc[key];
+      let cheapest: { label: string; index: number } | undefined;
+      bucketDefs.forEach((b, i) => {
+        const count = a.counts[i] ?? 0;
+        if (count > 0) {
+          const idx = (a.sums[i] ?? 0) / count;
+          if (!cheapest || idx < cheapest.index) cheapest = { label: b.label, index: idx };
+        }
+      });
+      const volatilityPct =
+        a.volatility.length > 0
+          ? a.volatility.reduce((s, v) => s + v, 0) / a.volatility.length
+          : undefined;
+      return {
+        airline: key,
+        observations: a.observations,
+        flights: a.flights.size,
+        cheapestWindowLabel: cheapest?.label,
+        volatilityPct,
+      };
+    };
+
+    return {
+      buckets,
+      southwest: summarize('southwest'),
+      united: summarize('united'),
+      totalObservations: acc.southwest.observations + acc.united.observations,
     };
   }
 

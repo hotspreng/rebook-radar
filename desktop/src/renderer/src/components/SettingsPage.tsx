@@ -1,18 +1,25 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, EmailImportResult, EmailStatus, SerpApiKeyUsage } from '@shared/dto';
+import type { AppSettings, EmailImportResult, EmailStatus, Passenger, SerpApiKeyUsage } from '@shared/dto';
 import { Airline } from '@swr/core';
-import { Activity, Mail, Plug, RefreshCw, Save } from 'lucide-react';
+import { Activity, Mail, Plug, Plus, RefreshCw, Save, Trash2, Users } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore.js';
-import { Button, Card, Field, inputClass } from './ui.js';
+import { Button, Card, Field, Modal, inputClass } from './ui.js';
 import { formatDateTime } from '../lib/format.js';
 
 const api = window.swr;
 
 export function SettingsPage(): JSX.Element {
-  const { settings, monitor, updateSettings, pushToast } = useAppStore();
+  const { settings, monitor, passengers, refreshPassengers, updateSettings, pushToast } = useAppStore();
   const [draft, setDraft] = useState<AppSettings | null>(settings);
   const [saving, setSaving] = useState(false);
   const [warming, setWarming] = useState(false);
+  const [showPassengerForm, setShowPassengerForm] = useState(false);
+
+  async function handleDeletePassenger(p: Passenger): Promise<void> {
+    await api.passengers.remove(p.id);
+    await refreshPassengers();
+    pushToast('info', `Removed ${p.fullName}.`);
+  }
 
   if (!draft) return <div className="p-8 text-slate-400">Loading…</div>;
 
@@ -69,6 +76,50 @@ export function SettingsPage(): JSX.Element {
       </header>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-7 py-6">
+        <Card className="px-6 py-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-200">Passengers</h2>
+              <p className="text-xs text-slate-500">People whose flights you track.</p>
+            </div>
+            <Button variant="secondary" onClick={() => setShowPassengerForm(true)}>
+              <Plus size={16} /> Add passenger
+            </Button>
+          </div>
+          {passengers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-8 text-center text-slate-500">
+              <Users size={28} />
+              <p className="text-sm">
+                No passengers yet. Add yourself and family members to start tracking flights.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {passengers.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3"
+                >
+                  <div>
+                    <p className="font-medium text-slate-100">{p.fullName}</p>
+                    <p className="text-xs text-slate-500">
+                      {p.rapidRewardsNumber
+                        ? `RR# ${p.rapidRewardsNumber}`
+                        : 'No Rapid Rewards number'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void handleDeletePassenger(p)}
+                    className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-red-400"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
         <Card className="px-6 py-5">
           <h2 className="mb-4 text-sm font-semibold text-slate-200">Points valuation</h2>
           <div className="grid grid-cols-2 gap-4">
@@ -259,7 +310,69 @@ export function SettingsPage(): JSX.Element {
           </div>
         </Card>
       </div>
+
+      {showPassengerForm && (
+        <PassengerFormModal
+          onClose={() => setShowPassengerForm(false)}
+          onSaved={refreshPassengers}
+        />
+      )}
     </div>
+  );
+}
+
+function PassengerFormModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}): JSX.Element {
+  const [fullName, setFullName] = useState('');
+  const [rr, setRr] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave(): Promise<void> {
+    if (!fullName.trim()) return;
+    setSaving(true);
+    await api.passengers.create({
+      fullName: fullName.trim(),
+      rapidRewardsNumber: rr.trim() || undefined,
+      accountIds: [],
+    });
+    onSaved();
+    onClose();
+  }
+
+  return (
+    <Modal
+      title="Add passenger"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Full name">
+          <input
+            className={inputClass}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="As shown on booking"
+          />
+        </Field>
+        <Field label="Rapid Rewards number" hint="Optional — helps match imported trips.">
+          <input className={inputClass} value={rr} onChange={(e) => setRr(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 

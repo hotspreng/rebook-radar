@@ -186,6 +186,52 @@ export interface SavingsReport {
   events: RebookEventView[];
 }
 
+/**
+ * One lead-time bucket in the price-trends chart. Each flight's observed CASH
+ * fares are normalized to that flight's own average cash fare (index 100 = the
+ * flight's average) before being averaged across flights, so routes of very
+ * different absolute prices can be combined into one curve that shows how cash
+ * fares move as departure approaches. Points-based prices and points-to-cash
+ * conversions are excluded.
+ */
+export interface PriceTrendBucket {
+  /** Representative days-before-departure for ordering (higher = earlier). */
+  daysBefore: number;
+  /** Short axis label, e.g. "5+ mo", "3 wk", "1 wk", "0–2 d". */
+  label: string;
+  /** Average price index for Southwest (100 = each flight's own average). */
+  southwestIndex?: number;
+  /** Average price index for United. */
+  unitedIndex?: number;
+  /** Number of price observations behind the Southwest average. */
+  southwestSamples: number;
+  /** Number of price observations behind the United average. */
+  unitedSamples: number;
+}
+
+/** Per-airline rollup that accompanies the price-trends chart. */
+export interface AirlineTrendSummary {
+  airline: 'southwest' | 'united';
+  /** Total price observations contributing to this airline's curve. */
+  observations: number;
+  /** Distinct flights that contributed observations. */
+  flights: number;
+  /** Lead-time label where the average price is lowest (best time to book). */
+  cheapestWindowLabel?: string;
+  /** Average absolute % change between consecutive observations (volatility). */
+  volatilityPct?: number;
+}
+
+/** Price-trend analytics shown on the Trends blade. */
+export interface PriceTrends {
+  /** Lead-time buckets, earliest (furthest from departure) first. */
+  buckets: PriceTrendBucket[];
+  southwest: AirlineTrendSummary;
+  united: AirlineTrendSummary;
+  /** Total price observations across both airlines. */
+  totalObservations: number;
+}
+
 /** Input for creating an account, including the password to store securely. */
 export interface CreateAccountInput {
   account: NewAccount;

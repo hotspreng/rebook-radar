@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type {
-  Account,
   AppSettings,
   FlightWithComparison,
   MonitorStatus,
@@ -19,22 +18,18 @@ interface AppState {
   loading: boolean;
   flights: FlightWithComparison[];
   passengers: Passenger[];
-  accounts: Account[];
   settings: AppSettings | null;
   monitor: MonitorStatus | null;
   toasts: Toast[];
 
   // filters
   passengerFilter: string | 'all';
-  accountFilter: string | 'all';
 
   init(): Promise<void>;
   refreshFlights(): Promise<void>;
-  refreshAccounts(): Promise<void>;
   refreshPassengers(): Promise<void>;
 
   setPassengerFilter(id: string | 'all'): void;
-  setAccountFilter(id: string | 'all'): void;
 
   checkOne(flightId: string): Promise<void>;
   checkAll(): Promise<void>;
@@ -48,23 +43,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   loading: true,
   flights: [],
   passengers: [],
-  accounts: [],
   settings: null,
   monitor: null,
   toasts: [],
   passengerFilter: 'all',
-  accountFilter: 'all',
 
   async init() {
     set({ loading: true });
-    const [flights, passengers, accounts, settings, monitor] = await Promise.all([
+    const [flights, passengers, settings, monitor] = await Promise.all([
       api.flights.list(),
       api.passengers.list(),
-      api.accounts.list(),
       api.settings.get(),
       api.monitor.status(),
     ]);
-    set({ flights, passengers, accounts, settings, monitor, loading: false });
+    set({ flights, passengers, settings, monitor, loading: false });
 
     api.onPriceUpdate(() => void get().refreshFlights());
     api.onMonitorStatus((status) => set({ monitor: status }));
@@ -74,18 +66,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   async refreshFlights() {
     set({ flights: await api.flights.list() });
   },
-  async refreshAccounts() {
-    set({ accounts: await api.accounts.list() });
-  },
   async refreshPassengers() {
     set({ passengers: await api.passengers.list() });
   },
 
   setPassengerFilter(id) {
     set({ passengerFilter: id });
-  },
-  setAccountFilter(id) {
-    set({ accountFilter: id });
   },
 
   async checkOne(flightId) {

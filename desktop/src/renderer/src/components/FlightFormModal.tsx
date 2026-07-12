@@ -8,7 +8,7 @@ import {
   type Flight,
   type NewFlight,
 } from '@swr/core';
-import type { Account, Passenger } from '@shared/dto';
+import type { Passenger } from '@shared/dto';
 import { Button, Field, Modal, inputClass } from './ui.js';
 import { FARE_LABELS } from '../lib/format.js';
 
@@ -16,15 +16,13 @@ const api = window.swr;
 
 interface Props {
   passengers: Passenger[];
-  accounts: Account[];
   existing?: Flight;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function FlightFormModal({ passengers, accounts, existing, onClose, onSaved }: Props): JSX.Element {
+export function FlightFormModal({ passengers, existing, onClose, onSaved }: Props): JSX.Element {
   const [passengerId, setPassengerId] = useState(existing?.passengerId ?? passengers[0]?.id ?? '');
-  const [accountId, setAccountId] = useState(existing?.accountId ?? '');
   const [airline, setAirline] = useState<Airline>(existing?.airline ?? Airline.Southwest);
   const [confirmation, setConfirmation] = useState(existing?.confirmationNumber ?? '');
   const [origin, setOrigin] = useState(existing?.route.origin.code ?? '');
@@ -57,7 +55,6 @@ export function FlightFormModal({ passengers, accounts, existing, onClose, onSav
     try {
       const base: NewFlight = {
         passengerId,
-        accountId: accountId || undefined,
         airline,
         confirmationNumber: confirmation.toUpperCase(),
         route: {
@@ -114,16 +111,6 @@ export function FlightFormModal({ passengers, accounts, existing, onClose, onSav
             {passengers.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.fullName}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Account (optional)">
-          <select className={inputClass} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            <option value="">None</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}
               </option>
             ))}
           </select>

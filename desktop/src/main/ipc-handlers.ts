@@ -98,7 +98,7 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
 
   // Reporting
   handle(IPC.reportSavings, () => service.getSavingsReport());
-
+  handle(IPC.reportTrends, () => service.getPriceTrends());
   // System
   handle<string>(IPC.openExternal, (url) => shell.openExternal(url));
 

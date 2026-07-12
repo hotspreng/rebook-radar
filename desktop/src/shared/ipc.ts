@@ -52,6 +52,7 @@ export const IPC = {
 
   // Reporting
   reportSavings: 'report:savings',
+  reportTrends: 'report:trends',
 
   // System
   openExternal: 'system:openExternal',

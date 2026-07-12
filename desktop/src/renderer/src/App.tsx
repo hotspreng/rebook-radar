@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { Sidebar, type Route } from './components/Sidebar.js';
 import { Dashboard } from './components/Dashboard.js';
 import { ReportingPage } from './components/ReportingPage.js';
-import { PassengersPage } from './components/PassengersPage.js';
-import { AccountsPage } from './components/AccountsPage.js';
+import { TrendsPage } from './components/TrendsPage.js';
 import { SettingsPage } from './components/SettingsPage.js';
 import { Toasts } from './components/Toasts.js';
 import { useAppStore } from './store/useAppStore.js';
@@ -26,8 +25,7 @@ export default function App(): JSX.Element {
           <>
             {route === 'dashboard' && <Dashboard />}
             {route === 'reporting' && <ReportingPage />}
-            {route === 'passengers' && <PassengersPage />}
-            {route === 'accounts' && <AccountsPage />}
+            {route === 'trends' && <TrendsPage />}
             {route === 'settings' && <SettingsPage />}
           </>
         )}
