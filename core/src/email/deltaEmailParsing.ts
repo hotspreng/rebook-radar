@@ -2,7 +2,6 @@ import { Airline, FareType, PurchaseType } from '../models/common.js';
 import {
   RetrievedFlightSegment,
   RetrievedTrip,
-  RetrievedTripLeg,
 } from '../providers/AirlineProvider.js';
 import { EmailMessage } from './EmailMessage.js';
 import { ParsedTripEvent, TripEventType } from './TripEvent.js';
@@ -10,21 +9,24 @@ import { ParsedTripEvent, TripEventType } from './TripEvent.js';
 /**
  * Pure, framework-agnostic parsing for Delta Air Lines confirmation emails.
  *
- * Delta sends transactional mail from the `delta.com` family of senders
- * (e.g. `DeltaAirLines@e.delta.com`). The reliable source is the flight
- * confirmation / eTicket receipt, which carries the 6-character confirmation
- * number, each operated segment, the traveler list, and a total in either cash
- * ("$318.60") or SkyMiles ("25,000 miles + $5.60").
+ * Tuned against real Delta "Award Receipt" emails from `DeltaAirLines@t.delta.com`
+ * (subject "Congrats On Your SkyMiles Award Trip"). Delta's HTML-stripped body is
+ * unusual compared with other carriers:
+ *   • The itinerary lists CITY NAMES ("DENVER", "NYC-KENNEDY", "ITHACA NY"), not
+ *     3-letter codes. The airport CODES come from the "Fare Details:" routing line
+ *     ("DEN DL X/NYC DL ITH …") and a clean baggage-summary line
+ *     ("Tue 23 Feb 2027DEN-ITH") which also carries the YEAR.
+ *   • Dates in the itinerary read "Tue, 23FEB" (no year); the year is taken from
+ *     the baggage summary, falling back to the ticket "Issue Date: 12JUL26".
+ *   • The dollar sign is HTML-encoded as "&#36;" and miles read
+ *     "Miles Redeemed 27,100 Miles".
  *
- * IMPORTANT — these regexes are a best-effort starting point modeled on the
- * United parser. Delta's exact body layout/whitespace should be verified against
- * a real email (enable Debug logging, import, inspect the dumped body) and the
- * SEGMENT / traveler / pricing patterns tuned accordingly. The parser fails soft:
- * an email it can't fully parse still yields its confirmation number + event
- * type when possible, and never corrupts a richer event for the same PNR.
+ * The parser fails soft: an email it can't fully parse still yields its
+ * confirmation number + event type when possible, and never overwrites a richer
+ * event for the same PNR during the fold.
  */
 
-/** Any Delta sender (transactional + marketing), e.g. DeltaAirLines@e.delta.com. */
+/** Any Delta sender (transactional + marketing), e.g. DeltaAirLines@t.delta.com. */
 const DELTA_FROM = /@(?:[a-z0-9-]+\.)*delta\.com/i;
 
 /** True when the sender looks like Delta Air Lines (any address). */
@@ -34,12 +36,13 @@ export function isDeltaEmail(from: string | null | undefined): boolean {
 
 /**
  * Classify a Delta email into a trip event using the SUBJECT line only.
- *   • Booking — "Your Delta flight confirmation (HGKZPQ)" / "Flight Receipt …"
- *               "eTicket Itinerary/Receipt" / "Your trip to Atlanta"
+ *   • Booking — "Congrats On Your SkyMiles Award Trip" / "Your Delta flight
+ *               confirmation" / "eTicket Receipt" / "Award Receipt"
  *   • Change  — "schedule change" / "your flight has changed" / "new time"
  *   • Cancel  — "… has been canceled" / "cancellation" / "refund"
  *
- * Cancellation > change > booking precedence.
+ * Cancellation > change > booking precedence. Account/marketing subjects
+ * (e.g. "Your SkyMiles Account Has Been Updated") match nothing and are skipped.
  */
 export function classifyDeltaEmail(
   subject: string | null | undefined,
@@ -58,6 +61,8 @@ export function classifyDeltaEmail(
     return TripEventType.Changed;
   }
   if (
+    /award trip/i.test(s) ||
+    /award receipt/i.test(s) ||
     /flight confirmation/i.test(s) ||
     /flight receipt/i.test(s) ||
     /eticket/i.test(s) ||
@@ -73,41 +78,40 @@ export function classifyDeltaEmail(
 
 /** Pull the 6-char confirmation number (PNR) from a Delta subject. */
 function parsePnrFromSubject(subject: string): string | undefined {
-  // "… confirmation (HGKZPQ)", "Confirmation #: HGKZPQ", "receipt - HGKZPQ".
   const parens = subject.match(/\(([A-Z0-9]{6})\)/);
   if (parens) return parens[1]!.toUpperCase();
   const labeled = subject.match(/confirmation\s*(?:number|#|code)?\s*[–\-:]?\s*([A-Z0-9]{6})\b/i);
   if (labeled) return labeled[1]!.toUpperCase();
-  const trailing = subject.match(/[–\-]\s*([A-Z0-9]{6})\b/);
-  if (trailing) return trailing[1]!.toUpperCase();
-  // Last resort: a standalone 6-char record locator that has both a letter and a
-  // digit and is not a Delta flight number (DL1234).
-  for (const m of subject.matchAll(/\b([A-Z0-9]{6})\b/g)) {
-    const token = m[1]!.toUpperCase();
-    if (/^DL\d/.test(token)) continue;
-    if (/[A-Z]/.test(token) && /\d/.test(token)) return token;
-  }
   return undefined;
 }
 
-/** Pull the PNR from the body ("Confirmation #: HGKZPQ" / "Confirmation Number HGKZPQ"). */
+/** Pull the PNR from the body: "Confirmation Number\n HWGXRS". */
 function parsePnrFromBody(body: string): string | undefined {
-  const m = body.match(/Confirmation\s*(?:number|#|code)?\s*[:#]?\s*([A-Z0-9]{6})\b/i);
-  return m ? m[1]!.toUpperCase() : undefined;
+  const m = body.match(/Confirmation\s*Number\s*[:#]?\s*([A-Z0-9]{6})\b/i);
+  if (!m) return undefined;
+  const token = m[1]!.toUpperCase();
+  // A real record locator mixes letters and digits (avoid all-digit ticket/account
+  // numbers that could follow a mislabeled heading).
+  return /[A-Z]/.test(token) ? token : undefined;
 }
 
 /**
- * Parse one Delta email into a {@link ParsedTripEvent}. Returns `undefined`
- * when it is not a recognizable Delta trip email, or when a booking/change email
- * carries no parseable itinerary (so an empty notification never overwrites a
- * richer receipt during the fold).
+ * Parse one Delta email into a {@link ParsedTripEvent}. Returns `undefined` when
+ * it is not a recognizable Delta trip email, or when a booking/change email
+ * carries no parseable itinerary (e.g. the "transaction notice" redemption email
+ * that has miles but no flights — the full Award Receipt for the same trip wins).
  */
 export function parseDeltaEmail(message: EmailMessage): ParsedTripEvent | undefined {
   const type = classifyDeltaEmail(message.subject);
   if (!type) return undefined;
 
+  // Delta's HTML-stripped body has blank/whitespace-only lines between every
+  // field. Collapse them (trim each line, drop empties) so the field-per-line
+  // itinerary parser sees one value per line.
+  const body = normalizeBody(message.body ?? '');
+
   const confirmationNumber =
-    parsePnrFromSubject(message.subject ?? '') ?? parsePnrFromBody(message.body ?? '');
+    parsePnrFromSubject(message.subject ?? '') ?? parsePnrFromBody(body);
   if (!confirmationNumber) return undefined;
 
   const base: ParsedTripEvent = {
@@ -119,20 +123,18 @@ export function parseDeltaEmail(message: EmailMessage): ParsedTripEvent | undefi
 
   if (type === TripEventType.Cancelled) return base;
 
-  const trip = parseDeltaTripDetails(message.body ?? '', confirmationNumber);
+  const trip = parseDeltaTripDetails(body, confirmationNumber);
   if (!trip) return undefined;
   return { ...base, trip };
 }
 
-/** One operated segment parsed from a Delta email. */
-interface ParsedSegment {
-  flightNumber: string;
-  origin: string;
-  originName: string;
-  destination: string;
-  destinationName: string;
-  departureDateTime: string;
-  arrivalDateTime: string;
+/** Trim each line and drop blank lines so one field sits on one line. */
+function normalizeBody(body: string): string {
+  return body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n');
 }
 
 const MONTHS: Record<string, string> = {
@@ -140,171 +142,137 @@ const MONTHS: Record<string, string> = {
   jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
 };
 
-/**
- * Parse a date + time into a naive local ISO string, e.g.
- * "Apr 10, 2026" / "April 10, 2026" / "10-Apr-2026" + "6:00 AM"
- * → "2026-04-10T06:00:00". Returns "" when either part can't be read.
- */
-function toIso(dateText: string, timeText: string): string {
-  let month: string | undefined;
-  let day: string | undefined;
-  let year: string | undefined;
-
-  const named = dateText.match(/([A-Za-z]{3,9})\s*\.?\s*(\d{1,2}),?\s*(\d{4})/); // Apr 10, 2026
-  const dashed = dateText.match(/(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{4})/); // 10-Apr-2026
-  if (named) {
-    month = MONTHS[named[1]!.slice(0, 3).toLowerCase()];
-    day = named[2]!.padStart(2, '0');
-    year = named[3]!;
-  } else if (dashed) {
-    month = MONTHS[dashed[2]!.slice(0, 3).toLowerCase()];
-    day = dashed[1]!.padStart(2, '0');
-    year = dashed[3]!;
-  }
-  const tm = timeText.match(/(\d{1,2}):(\d{2})\s*([AP]M)/i);
-  if (!month || !day || !year || !tm) return '';
-  let hour = Number.parseInt(tm[1]!, 10) % 12;
-  if (/pm/i.test(tm[3]!)) hour += 12;
-  return `${year}-${month}-${day}T${String(hour).padStart(2, '0')}:${tm[2]}:00`;
+/** "PM"/"AM" clock like "12:20PM" → 24-hour "12:20"; "11:21PM" → "23:21". */
+function to24(time: string): string | undefined {
+  const m = time.match(/(\d{1,2}):(\d{2})\s*([AP]M)/i);
+  if (!m) return undefined;
+  let hour = Number.parseInt(m[1]!, 10) % 12;
+  if (/pm/i.test(m[3]!)) hour += 12;
+  return `${String(hour).padStart(2, '0')}:${m[2]}`;
 }
 
-/**
- * Match a single flight block in a Delta confirmation/receipt. Delta typically
- * renders a "Departs / Arrives" pair with a city name + code + date + time,
- * followed by the operating flight ("Delta 1234" / "DL 1234"). Tolerant of the
- * blank-line padding Delta inserts.
- *
- *   Departs  Atlanta, GA (ATL)
- *   Fri, Apr 10, 2026  6:00 AM
- *   Arrives  New York-JFK, NY (JFK)
- *   Fri, Apr 10, 2026  8:20 AM
- *   Delta 1234
- */
-const SEGMENT_RE =
-  /Departs?\b[:\s]*([^()\n]+?)\s*\(([A-Z]{3})\)[\s\S]*?((?:[A-Za-z]{3,9}\s*\.?\s*\d{1,2},?\s*\d{4})|(?:\d{1,2}[-\s][A-Za-z]{3,9}[-\s]\d{4}))[^\n]*?(\d{1,2}:\d{2}\s*[AP]M)[\s\S]*?Arrives?\b[:\s]*([^()\n]+?)\s*\(([A-Z]{3})\)[\s\S]*?((?:[A-Za-z]{3,9}\s*\.?\s*\d{1,2},?\s*\d{4})|(?:\d{1,2}[-\s][A-Za-z]{3,9}[-\s]\d{4}))[^\n]*?(\d{1,2}:\d{2}\s*[AP]M)[\s\S]*?(?:Delta|DL)\s*(\d{1,4})\b/gi;
-
-/** Extract operated segments from a Delta email body, in itinerary order. */
-function parseDeltaSegments(body: string): ParsedSegment[] {
-  const segments: ParsedSegment[] = [];
-  for (const m of body.matchAll(SEGMENT_RE)) {
-    const [
-      ,
-      origName,
-      origCode,
-      depDate,
-      depTime,
-      destName,
-      destCode,
-      arrDate,
-      arrTime,
-      flightNum,
-    ] = m;
-    const departureDateTime = toIso(depDate!, depTime!);
-    if (!departureDateTime) continue;
-    segments.push({
-      flightNumber: `DL ${flightNum}`,
-      origin: origCode!.toUpperCase(),
-      originName: origName!.trim(),
-      destination: destCode!.toUpperCase(),
-      destinationName: destName!.trim(),
-      departureDateTime,
-      arrivalDateTime: toIso(arrDate!, arrTime!),
-    });
-  }
-  return segments;
-}
-
-const LEG_BREAK_MS = 8 * 60 * 60 * 1000; // > 8h on the ground = a new leg, not a connection.
-
-/**
- * Group operated segments into flown legs. Consecutive segments where the next
- * departs the airport the previous arrived at, within ~8 hours, are a connection
- * (one leg); a longer gap or a different airport starts a new leg (e.g. the
- * return direction of a round trip).
- */
-function groupSegmentsIntoLegs(segments: ParsedSegment[]): RetrievedTripLeg[] {
-  if (segments.length === 0) return [];
-  const legs: ParsedSegment[][] = [[segments[0]!]];
-  for (let i = 1; i < segments.length; i++) {
-    const prev = segments[i - 1]!;
-    const cur = segments[i]!;
-    const connects = cur.origin === prev.destination;
-    const gapMs =
-      prev.arrivalDateTime && cur.departureDateTime
-        ? new Date(cur.departureDateTime).getTime() - new Date(prev.arrivalDateTime).getTime()
-        : Number.POSITIVE_INFINITY;
-    if (connects && gapMs >= 0 && gapMs <= LEG_BREAK_MS) {
-      legs[legs.length - 1]!.push(cur);
-    } else {
-      legs.push([cur]);
+/** The airport-code sequence for the journey, from the "Fare Details:" routing
+ *  line ("DEN DL X/NYC DL ITH …" → [DEN, NYC, ITH]). Airline "DL" separators and
+ *  the trailing fare basis are ignored. */
+function parseRouteCodes(body: string): string[] {
+  const line = body.match(/Fare Details:\s*([^\n]+)/i)?.[1];
+  if (!line) return [];
+  const tokens = line.trim().split(/\s+/);
+  const codes: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!.replace(/^X\//, '');
+    if (i % 2 === 0) {
+      const m = t.match(/^([A-Z]{3})/);
+      if (!m) break;
+      codes.push(m[1]!);
+    } else if (t !== 'DL') {
+      break;
     }
   }
-  return legs.map((segs) => {
-    const firstSeg = segs[0]!;
-    const lastSeg = segs[segs.length - 1]!;
-    const retSegments: RetrievedFlightSegment[] = segs.map((s) => ({
-      origin: s.origin,
-      destination: s.destination,
-      originName: s.originName,
-      destinationName: s.destinationName,
-      departureDateTime: s.departureDateTime,
-      arrivalDateTime: s.arrivalDateTime || undefined,
-      flightNumber: s.flightNumber,
-    }));
-    return {
-      origin: firstSeg.origin,
-      destination: lastSeg.destination,
-      departureDateTime: firstSeg.departureDateTime,
-      arrivalDateTime: lastSeg.arrivalDateTime || undefined,
-      segments: retSegments.length > 1 ? retSegments : undefined,
-    };
-  });
+  return codes;
 }
 
-/** Title-case a traveler name token, e.g. "JOSHUA" → "Joshua". */
-function titleCase(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+/** The date + endpoints from the baggage summary line ("Tue 23 Feb 2027DEN-ITH"),
+ *  which is the only place the YEAR appears. */
+function parseBaggageSummary(
+  body: string,
+): { date: string; origin: string; destination: string } | undefined {
+  const m = body.match(/\b(\d{1,2})\s+([A-Za-z]{3,9})\s+(20\d{2})\s*([A-Z]{3})-([A-Z]{3})\b/);
+  if (!m) return undefined;
+  const month = MONTHS[m[2]!.slice(0, 3).toLowerCase()];
+  if (!month) return undefined;
+  return {
+    date: `${m[3]}-${month}-${m[1]!.padStart(2, '0')}`,
+    origin: m[4]!.toUpperCase(),
+    destination: m[5]!.toUpperCase(),
+  };
+}
+
+/** Fallback trip date from the itinerary marker "Tue, 23FEB" + the ticket
+ *  "Issue Date: 12JUL26" (a trip whose month/day precedes issue is next year). */
+function parseFallbackDate(body: string): string | undefined {
+  const marker = body.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,\s*(\d{1,2})([A-Za-z]{3})/i);
+  if (!marker) return undefined;
+  const month = MONTHS[marker[2]!.toLowerCase()];
+  if (!month) return undefined;
+  const day = marker[1]!.padStart(2, '0');
+
+  const issue = body.match(/Issue Date:\s*(\d{1,2})([A-Za-z]{3})(\d{2})/i);
+  let year = new Date().getFullYear();
+  if (issue) {
+    const issueMonth = MONTHS[issue[2]!.toLowerCase()] ?? '01';
+    year = 2000 + Number.parseInt(issue[3]!, 10);
+    // The trip is after the issue date; if its month/day is earlier, it's next year.
+    if (`${month}-${day}` < `${issueMonth}-${issue[1]!.padStart(2, '0')}`) year += 1;
+  }
+  return `${year}-${month}-${day}`;
+}
+
+/** One flight block parsed from the itinerary (flight number + dep/arr times). */
+interface ParsedFlight {
+  flightNumber: string;
+  departureTime: string; // 24h "HH:mm"
+  arrivalTime: string; // 24h "HH:mm"
 }
 
 /**
- * Parse the traveler list. Delta commonly lists passengers as "LAST/FIRST" in a
- * receipt, or "Passenger  First Last" lines. Emitted as "First Last" so the
- * importer matches a stored passenger by first-initial + last name.
+ * Match each flight block in the Delta itinerary:
+ *
+ *   DELTA 532
+ *   Delta Main (N)
+ *   DENVER
+ *   12:20PM
+ *   NYC-KENNEDY
+ *   06:22PM
+ *
+ * The cabin line "… (N)" anchors a real segment so the top-of-email seat summary
+ * ("DELTA 53227A") is never mistaken for a flight.
  */
+const FLIGHT_RE =
+  /DELTA\s+(\d+)\*?\s*[\r\n]+[^\r\n]*\([A-Z0-9]\)[^\r\n]*[\r\n]+[^\r\n]+[\r\n]+\s*(\d{1,2}:\d{2}\s*[AP]M)\s*[\r\n]+[^\r\n]+[\r\n]+\s*(\d{1,2}:\d{2}\s*[AP]M)/gi;
+
+function parseFlights(body: string): ParsedFlight[] {
+  const flights: ParsedFlight[] = [];
+  for (const m of body.matchAll(FLIGHT_RE)) {
+    const dep = to24(m[2]!);
+    const arr = to24(m[3]!);
+    if (!dep || !arr) continue;
+    flights.push({ flightNumber: `DL ${m[1]}`, departureTime: dep, arrivalTime: arr });
+  }
+  return flights;
+}
+
+/** Title-case an ALL-CAPS name, e.g. "EMILY JEAN SPRENGER" → "Emily Jean Sprenger". */
+function titleCaseName(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+/** Parse travelers from "Name: EMILY JEAN SPRENGER" lines. */
 function parseDeltaTravelers(body: string): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
-  const add = (full: string): void => {
+  // Constrain to a single line ([ \t], not \s) so the name doesn't bleed into
+  // the following all-caps lines (e.g. "FLIGHTSEAT", "DELTA 532").
+  for (const m of body.matchAll(/Name:[ \t]*([A-Z][A-Z.]+(?:[ \t]+[A-Z][A-Z.]+)+)/g)) {
+    const full = titleCaseName(m[1]!);
     const key = full.toLowerCase();
-    if (full.trim() && !seen.has(key)) {
+    if (!seen.has(key)) {
       seen.add(key);
       names.push(full);
     }
-  };
-
-  // "LAST/FIRST" (eTicket receipt style), scoped to a Passenger/Traveler block.
-  const start = body.search(/passenger|traveler/i);
-  const region = start >= 0 ? body.slice(start) : body;
-  for (const m of region.matchAll(/\b([A-Z]{2,})\/([A-Z]{2,})\b/g)) {
-    add(`${titleCase(m[2]!)} ${titleCase(m[1]!)}`);
-  }
-  if (names.length > 0) return names;
-
-  // "Passenger  Emily Sprenger" / "Traveler 1  Emily Sprenger".
-  for (const m of body.matchAll(
-    /(?:Passenger|Traveler)s?\b[ \t]*\d*[ \t:]*([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)/g,
-  )) {
-    add(m[1]!.trim().replace(/\s+/g, ' '));
   }
   return names;
 }
 
 /**
- * Parse the fare from a Delta email body.
- *   • Award — "25,000 miles + $5.60" / "SkyMiles: 25,000" (+ a "$" taxes line)
- *   • Cash  — "Total: $318.60" / "Total Charged $318.60"
- * Reservation-wide totals are divided by the passenger count so each tracked
- * traveler gets a per-passenger figure.
+ * Parse the fare. Delta Award Receipts read "Miles Redeemed 27,100 Miles" plus a
+ * cash "Total Charged - &#36;5.60 USD" (taxes/fees on an award). A pure-cash Delta
+ * receipt (no miles) is treated as a cash booking on the total. Reservation-wide
+ * amounts are divided by the passenger count.
  */
 function parseDeltaPricing(
   body: string,
@@ -316,35 +284,60 @@ function parseDeltaPricing(
   taxesAndFeesUsd?: number;
 } {
   const count = Math.max(1, passengerCount);
+  const money = (raw: string): number => Number.parseFloat(raw.replace(/,/g, ''));
+  const totalCharged = body.match(/Total Charged\s*[-:\s]*(?:&#36;|\$)\s*([\d,]+\.\d{2})/i);
 
-  const award = body.match(/([\d,]+)\s*(?:miles|skymiles)\b(?:[^$]*\$\s*([\d,]+(?:\.\d{2})?))?/i);
-  if (award) {
-    const miles = Number.parseInt(award[1]!.replace(/,/g, ''), 10) / count;
-    const taxes = award[2] ? Number.parseFloat(award[2].replace(/,/g, '')) / count : undefined;
+  const miles =
+    body.match(/Miles Redeemed\s*([\d,]+)\s*Miles/i) ?? body.match(/([\d,]+)\s*Miles\b/i);
+  if (miles) {
+    const points = Number.parseInt(miles[1]!.replace(/,/g, ''), 10) / count;
+    const taxes = totalCharged ? money(totalCharged[1]!) / count : undefined;
     return {
       purchaseType: PurchaseType.Points,
-      paidPoints: Math.round(miles),
+      paidPoints: Math.round(points),
       taxesAndFeesUsd: taxes != null ? Math.round(taxes * 100) / 100 : undefined,
     };
   }
 
-  const total = body.match(/Total(?:\s*Charged|\s*Cost|\s*Price)?\s*[:]?\s*\$\s*([\d,]+(?:\.\d{2})?)/i);
-  if (total) {
-    const amount = Number.parseFloat(total[1]!.replace(/,/g, '')) / count;
-    return { purchaseType: PurchaseType.Cash, paidCashUsd: Math.round(amount * 100) / 100 };
+  if (totalCharged) {
+    const total = money(totalCharged[1]!) / count;
+    return { purchaseType: PurchaseType.Cash, paidCashUsd: Math.round(total * 100) / 100 };
   }
-
   return {};
 }
 
-/** Build a {@link RetrievedTrip} from a Delta confirmation/receipt body. */
+/** Build a {@link RetrievedTrip} from a Delta Award Receipt body. */
 function parseDeltaTripDetails(body: string, confirmationNumber: string): RetrievedTrip | undefined {
-  const segments = parseDeltaSegments(body);
-  if (segments.length === 0) return undefined;
+  const flights = parseFlights(body);
+  if (flights.length === 0) return undefined;
 
-  const legs = groupSegmentsIntoLegs(segments);
-  const first = legs[0];
-  if (!first) return undefined;
+  const routeCodes = parseRouteCodes(body);
+  const baggage = parseBaggageSummary(body);
+  const date = baggage?.date ?? parseFallbackDate(body);
+  if (!date) return undefined;
+
+  const first = flights[0]!;
+  const last = flights[flights.length - 1]!;
+  const origin = baggage?.origin ?? routeCodes[0];
+  const destination = baggage?.destination ?? routeCodes[routeCodes.length - 1];
+  if (!origin || !destination) return undefined;
+
+  const departureDateTime = `${date}T${first.departureTime}:00`;
+  // Roll arrival to the next day if the clock goes backwards (a red-eye).
+  const arrivalDate = last.arrivalTime < first.departureTime ? nextDay(date) : date;
+  const arrivalDateTime = `${arrivalDate}T${last.arrivalTime}:00`;
+
+  // Detailed segments when the routing gives every airport in the path.
+  let segments: RetrievedFlightSegment[] | undefined;
+  if (routeCodes.length === flights.length + 1) {
+    segments = flights.map((f, i) => ({
+      origin: routeCodes[i]!,
+      destination: routeCodes[i + 1]!,
+      departureDateTime: `${date}T${f.departureTime}:00`,
+      arrivalDateTime: `${date}T${f.arrivalTime}:00`,
+      flightNumber: f.flightNumber,
+    }));
+  }
 
   const passengerNames = parseDeltaTravelers(body);
   const pricing = parseDeltaPricing(body, passengerNames.length);
@@ -353,17 +346,22 @@ function parseDeltaTripDetails(body: string, confirmationNumber: string): Retrie
     airline: Airline.Delta,
     confirmationNumber,
     passengerNames,
-    origin: first.origin,
-    destination: first.destination,
-    departureDateTime: first.departureDateTime,
-    arrivalDateTime: first.arrivalDateTime,
-    durationMinutes: first.durationMinutes,
-    segments: first.segments,
+    origin,
+    destination,
+    departureDateTime,
+    arrivalDateTime,
+    segments: segments && segments.length > 1 ? segments : undefined,
     fareType: FareType.Unknown,
     purchaseType: pricing.purchaseType,
     paidCashUsd: pricing.paidCashUsd,
     paidPoints: pricing.paidPoints,
     taxesAndFeesUsd: pricing.taxesAndFeesUsd,
-    legs: legs.length > 1 ? legs : undefined,
   };
+}
+
+/** Add one calendar day to an ISO date ("2027-02-23" → "2027-02-24"). */
+function nextDay(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 }
