@@ -410,6 +410,7 @@ export class AppService {
     // capped result set. The fold dispatches each message to the right parser.
     let southwest: EmailMessage[];
     let united: EmailMessage[];
+    let delta: EmailMessage[];
     try {
       southwest = await this.fetchTransactional(
         source,
@@ -420,6 +421,11 @@ export class AppService {
         source,
         'from:(Receipts@united.com OR notifications@united.com) newer_than:13m',
         'from:united.com newer_than:13m',
+      );
+      delta = await this.fetchTransactional(
+        source,
+        'from:(DeltaAirLines@e.delta.com OR DeltaAirLines@t.delta.com OR confirmation@delta.com) newer_than:13m',
+        'from:delta.com newer_than:13m',
       );
     } catch (err) {
       if (err instanceof GmailAuthError) {
@@ -433,10 +439,11 @@ export class AppService {
       }
       throw err;
     }
-    const messages = [...southwest, ...united];
+    const messages = [...southwest, ...united, ...delta];
     log.info('Fetched transactional emails', {
       southwest: southwest.length,
       united: united.length,
+      delta: delta.length,
     });
 
     const folded = new EmailTripImportService().fold(messages, { now: new Date() });

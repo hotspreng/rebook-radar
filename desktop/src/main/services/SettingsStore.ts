@@ -9,6 +9,10 @@ const SETTINGS_KEY = 'app';
  *  used as the default United rate when no prior per-airline value exists. */
 const DEFAULT_UNITED_POINT_VALUE_CENTS = 1.35;
 
+/** The Points Guy's published valuation for Delta SkyMiles (~1.2¢), used as the
+ *  default Delta rate when no prior per-airline value exists. */
+const DEFAULT_DELTA_POINT_VALUE_CENTS = 1.2;
+
 /** Persists user-editable settings as a single JSON row. */
 export class SettingsStore {
   constructor(private readonly defaults: AppConfig) {}
@@ -19,6 +23,7 @@ export class SettingsStore {
       pointValueCentsByAirline: {
         [Airline.Southwest]: this.defaults.defaultPointValueCents,
         [Airline.United]: DEFAULT_UNITED_POINT_VALUE_CENTS,
+        [Airline.Delta]: DEFAULT_DELTA_POINT_VALUE_CENTS,
       },
       pollIntervalMinutes: this.defaults.pollIntervalMinutes,
       savingsAlertThresholdUsd: this.defaults.savingsAlertThresholdUsd,
@@ -51,11 +56,19 @@ export class SettingsStore {
     }
     const merged = { ...this.defaultSettings(), ...parsed };
     // Migrate the legacy single global rate into per-airline rates: keep the
-    // user's existing rate for Southwest, seed United with TPG's valuation.
+    // user's existing rate for Southwest, seed United/Delta with TPG valuations.
     if (!parsed.pointValueCentsByAirline) {
       merged.pointValueCentsByAirline = {
         [Airline.Southwest]: parsed.pointValueCents ?? this.defaults.defaultPointValueCents,
         [Airline.United]: DEFAULT_UNITED_POINT_VALUE_CENTS,
+        [Airline.Delta]: DEFAULT_DELTA_POINT_VALUE_CENTS,
+      };
+    } else {
+      // Backfill any airline added after this settings row was first written
+      // (e.g. Delta) so every airline always has a configured rate.
+      merged.pointValueCentsByAirline = {
+        ...this.defaultSettings().pointValueCentsByAirline,
+        ...parsed.pointValueCentsByAirline,
       };
     }
     return merged;

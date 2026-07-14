@@ -141,6 +141,15 @@ export function SettingsPage(): JSX.Element {
                 onCommit={(v) => setAirlineRate(Airline.United, v)}
               />
             </Field>
+            <Field
+              label="Delta — cents per mile"
+              hint="The Points Guy values Delta SkyMiles at about 1.2¢ each."
+            >
+              <AwardRateInput
+                value={draft.pointValueCentsByAirline[Airline.Delta]}
+                onCommit={(v) => setAirlineRate(Airline.Delta, v)}
+              />
+            </Field>
           </div>
           <p className="mt-3 text-xs text-slate-500">
             Used to estimate award points from a cash fare and to value points savings in

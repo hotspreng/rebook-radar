@@ -3,16 +3,18 @@ import { EmailMessage } from './EmailMessage.js';
 import { ParsedTripEvent, TripEventType } from './TripEvent.js';
 import { parseSouthwestEmail } from './southwestEmailParsing.js';
 import { isUnitedEmail, parseUnitedEmail } from './unitedEmailParsing.js';
+import { isDeltaEmail, parseDeltaEmail } from './deltaEmailParsing.js';
 
 /**
  * Parse a single confirmation email into a trip event, dispatching to the
  * right airline parser by sender. United receipts/notifications come from
- * `@united.com`; everything else is treated as Southwest.
+ * `@united.com`, Delta from `@…delta.com`; everything else is treated as
+ * Southwest.
  */
 function parseAirlineEmail(message: EmailMessage): ParsedTripEvent | undefined {
-  return isUnitedEmail(message.from)
-    ? parseUnitedEmail(message)
-    : parseSouthwestEmail(message);
+  if (isUnitedEmail(message.from)) return parseUnitedEmail(message);
+  if (isDeltaEmail(message.from)) return parseDeltaEmail(message);
+  return parseSouthwestEmail(message);
 }
 
 
