@@ -81,15 +81,23 @@ app.whenReady().then(async () => {
   log.info('Application ready');
 });
 
+let shuttingDown = false;
+
+/** Idempotent shutdown: stop the monitor while the DB is still open, then close it. */
+function shutdown(): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  container?.monitor.stop();
+  closeDatabase();
+}
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    container?.monitor.stop();
-    closeDatabase();
+    shutdown();
     app.quit();
   }
 });
 
 app.on('before-quit', () => {
-  container?.monitor.stop();
-  closeDatabase();
+  shutdown();
 });
