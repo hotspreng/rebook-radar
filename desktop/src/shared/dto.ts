@@ -255,6 +255,28 @@ export interface FlightWithComparison {
   priceHistory?: PriceHistoryEntry[];
 }
 
+/**
+ * A flight whose departure is in the past, shown on the Past Flights blade.
+ * Summarizes what was originally paid the first time it was booked, the final
+ * amount paid after any rebookings, and the resulting saving.
+ */
+export interface PastFlightView {
+  flight: Flight;
+  passengerName: string;
+  /** Currency the booking was made in. */
+  purchaseType: PurchaseType;
+  /** Highest amount paid at first booking, in native units (points or USD). */
+  originalAmount: number;
+  /** Lowest final amount paid after any rebookings, in native units. */
+  finalAmount: number;
+  /** Amount saved in native units (original − final). */
+  savedAmount: number;
+  /** USD value of the saving (points valued via the airline's point value). */
+  savedValueUsd: number;
+  /** Number of recorded rebooking events for this flight. */
+  rebookings: number;
+}
+
 export interface MonitorStatus {
   running: boolean;
   intervalMinutes: number;

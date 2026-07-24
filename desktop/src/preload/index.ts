@@ -12,6 +12,7 @@ import type {
   FlightWithComparison,
   GmailCredentialsInput,
   MonitorStatus,
+  PastFlightView,
   PriceTrends,
   PriceUpdateEvent,
   SavingsReport,
@@ -56,6 +57,7 @@ const api: SwrApi = {
   },
   flights: {
     list: () => invoke<FlightWithComparison[]>(IPC.flightList),
+    past: () => invoke<PastFlightView[]>(IPC.flightPast),
     get: (id: string) => invoke<FlightWithComparison | undefined>(IPC.flightGet, id),
     create: (input: NewFlight) => invoke<Flight>(IPC.flightCreate, input),
     update: (flight: Flight) => invoke<Flight>(IPC.flightUpdate, flight),

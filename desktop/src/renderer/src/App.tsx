@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sidebar, type Route } from './components/Sidebar.js';
 import { Dashboard } from './components/Dashboard.js';
+import { PastFlightsPage } from './components/PastFlightsPage.js';
 import { ReportingPage } from './components/ReportingPage.js';
 import { TrendsPage } from './components/TrendsPage.js';
 import { SettingsPage } from './components/SettingsPage.js';
@@ -24,6 +25,7 @@ export default function App(): JSX.Element {
         ) : (
           <>
             {route === 'dashboard' && <Dashboard />}
+            {route === 'past' && <PastFlightsPage />}
             {route === 'reporting' && <ReportingPage />}
             {route === 'trends' && <TrendsPage />}
             {route === 'settings' && <SettingsPage />}

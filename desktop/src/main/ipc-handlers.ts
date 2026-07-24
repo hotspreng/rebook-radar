@@ -41,6 +41,7 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
 
   // Flights
   handle(IPC.flightList, () => service.listFlights());
+  handle(IPC.flightPast, () => service.getPastFlights());
   handle<string>(IPC.flightGet, (id) => service.getFlight(id));
   handle<NewFlight>(IPC.flightCreate, (input) => service.createFlight(input));
   handle<Flight>(IPC.flightUpdate, (f) => service.updateFlight(f));

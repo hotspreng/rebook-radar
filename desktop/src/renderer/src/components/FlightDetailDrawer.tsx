@@ -185,6 +185,11 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
                         {formatDateTime(entry.recordedAt)}
                       </span>
                       <span className="flex items-center gap-2">
+                        {entry.rebooking && (
+                          <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-400">
+                            rebooked
+                          </span>
+                        )}
                         <span className="text-slate-200">{formatNative(entry.amount, type)}</span>
                         {delta != null && delta !== 0 && (
                           <span
@@ -270,7 +275,11 @@ function PriceHistoryChart({
   // Oldest-first series of observations that actually carry a price.
   const points = entries
     .filter((e) => e.amount != null && Number.isFinite(e.amount))
-    .map((e) => ({ amount: e.amount as number, recordedAt: e.recordedAt }));
+    .map((e) => ({
+      amount: e.amount as number,
+      recordedAt: e.recordedAt,
+      rebooking: e.rebooking === true,
+    }));
 
   if (points.length < 2) return null;
 
@@ -326,9 +335,34 @@ function PriceHistoryChart({
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
         />
-        {coords.map((c, i) => (
-          <circle key={i} cx={c.x} cy={c.y} r={1.8} fill={stroke} />
-        ))}
+        {/* Mark where the flight was cancelled and rebooked. */}
+        {coords.map((c, i) =>
+          points[i]?.rebooking ? (
+            <line
+              key={`rebook-${i}`}
+              x1={c.x}
+              y1={padY / 2}
+              x2={c.x}
+              y2={height}
+              stroke="#38bdf8"
+              strokeWidth={1}
+              strokeDasharray="3 2"
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : null,
+        )}
+        {coords.map((c, i) => {
+          const rebooked = points[i]?.rebooking;
+          return (
+            <circle
+              key={i}
+              cx={c.x}
+              cy={c.y}
+              r={rebooked ? 2.8 : 1.8}
+              fill={rebooked ? '#38bdf8' : stroke}
+            />
+          );
+        })}
       </svg>
       <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500">
         <span>{formatDate(firstPoint.recordedAt)}</span>
@@ -337,6 +371,11 @@ function PriceHistoryChart({
         </span>
         <span>{formatDate(lastPoint.recordedAt)}</span>
       </div>
+      {points.some((p) => p.rebooking) && (
+        <p className="mt-1 flex items-center gap-1.5 text-[10px] text-sky-400">
+          <span className="inline-block h-2 w-2 rounded-full bg-sky-400" /> Cancelled &amp; rebooked
+        </p>
+      )}
     </div>
   );
 }

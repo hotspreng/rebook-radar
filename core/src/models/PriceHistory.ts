@@ -26,4 +26,12 @@ export interface PriceHistoryEntry {
 
   /** Current price normalized to USD (points valued via points-to-cash). */
   valueUsd: number;
+
+  /**
+   * Marks the point at which the flight was cancelled and rebooked (a new
+   * confirmation number). Set on a synthetic entry appended at rebooking time
+   * so the trend chart can note where the rebooking happened while keeping the
+   * pre-rebooking price history that was carried over from the old flight.
+   */
+  rebooking?: boolean;
 }

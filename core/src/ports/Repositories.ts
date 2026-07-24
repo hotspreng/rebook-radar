@@ -52,6 +52,12 @@ export interface PriceHistoryRepository {
   list(flightId: string): Promise<PriceHistoryEntry[]>;
   /** The most recently recorded observation, if any. */
   latest(flightId: string): Promise<PriceHistoryEntry | undefined>;
+  /**
+   * Move all history from one flight to another. Used when a flight is
+   * cancelled and rebooked under a new confirmation number, so the rebooked
+   * flight keeps the full pre-rebooking price trend.
+   */
+  reassignFlight(fromFlightId: string, toFlightId: string): Promise<void>;
   /** Remove all history for a flight (used when the flight is deleted). */
   deleteForFlight(flightId: string): Promise<void>;
 }

@@ -1,9 +1,10 @@
-import { LayoutDashboard, Settings, Plane, BarChart3, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, Settings, Plane, BarChart3, TrendingUp, History } from 'lucide-react';
 
-export type Route = 'dashboard' | 'reporting' | 'trends' | 'settings';
+export type Route = 'dashboard' | 'past' | 'reporting' | 'trends' | 'settings';
 
 const items: { id: Route; label: string; icon: JSX.Element }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+  { id: 'past', label: 'Past Flights', icon: <History size={18} /> },
   { id: 'reporting', label: 'Reporting', icon: <BarChart3 size={18} /> },
   { id: 'trends', label: 'Trends', icon: <TrendingUp size={18} /> },
   { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },

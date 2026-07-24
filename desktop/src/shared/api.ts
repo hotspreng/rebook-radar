@@ -17,6 +17,7 @@ import type {
   FlightWithComparison,
   GmailCredentialsInput,
   MonitorStatus,
+  PastFlightView,
   PriceTrends,
   PriceUpdateEvent,
   SavingsReport,
@@ -56,6 +57,7 @@ export interface SwrApi {
   };
   flights: {
     list(): Promise<FlightWithComparison[]>;
+    past(): Promise<PastFlightView[]>;
     get(id: string): Promise<FlightWithComparison | undefined>;
     create(input: NewFlight): Promise<Flight>;
     update(flight: Flight): Promise<Flight>;

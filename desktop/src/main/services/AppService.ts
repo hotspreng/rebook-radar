@@ -42,7 +42,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { PlaywrightSouthwestClient } from '../scraping/PlaywrightSouthwestClient.js';
 import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
@@ -485,6 +485,9 @@ export class AppService {
     // confirmation number (same passenger/route/date, lower price) can be
     // credited as a saving against the cancelled fare.
     const cancelledLegs = folded.cancelledTrips.flatMap((t) => expandTripLegs(t));
+    // Cancelled flights whose price history has already been carried over to a
+    // rebooked flight this import, so it is not migrated twice.
+    const migratedRebookFlights = new Set<string>();
 
     for (const trip of folded.active) {
       const passengerId = await this.resolvePassengerForImport(passengers, trip.passengerNames);
@@ -526,6 +529,15 @@ export class AppService {
         const cancelledMatch = this.findCancelledRebookMatch(cancelledLegs, legTrip);
         if (cancelledMatch) {
           await this.maybeRecordCancelRebooking(flight, legTrip, cancelledMatch);
+          // Carry the cancelled flight's observed price history onto the
+          // rebooked flight so its trend chart keeps the full history, marking
+          // where the rebooking happened.
+          await this.migrateHistoryForCancelRebook(
+            byConfirmation,
+            cancelledMatch,
+            flight,
+            migratedRebookFlights,
+          );
         }
         // For a brand-new booking, capture the real market fare so the
         // original cost shows an "actual" price instead of an estimate.
@@ -743,6 +755,62 @@ export class AppService {
   }
 
   /**
+   * Carry a cancelled flight's observed price history onto the flight it was
+   * rebooked into (a new confirmation number), and append a marker at the
+   * rebooking so the trend chart can note where the flight was rebooked. The
+   * cancelled flight itself is removed later by the cancellation pass, but its
+   * price history has already been re-pointed to the rebooked flight so it
+   * survives that deletion.
+   */
+  private async migrateHistoryForCancelRebook(
+    byConfirmation: Map<string, Flight[]>,
+    cancelledMatch: RetrievedTrip,
+    newFlight: Flight,
+    migrated: Set<string>,
+  ): Promise<void> {
+    const pnr = (cancelledMatch.confirmationNumber || '').toUpperCase();
+    if (!pnr) return;
+    const origin = (cancelledMatch.origin ?? '').toUpperCase();
+    const destination = (cancelledMatch.destination ?? '').toUpperCase();
+    const date = (cancelledMatch.departureDateTime ?? '').slice(0, 10);
+    const oldFlight = (byConfirmation.get(pnr) ?? []).find(
+      (f) =>
+        f.route.origin.code.toUpperCase() === origin &&
+        f.route.destination.code.toUpperCase() === destination &&
+        f.departureDateTime.slice(0, 10) === date,
+    );
+    if (!oldFlight || oldFlight.id === newFlight.id) return;
+    if (migrated.has(oldFlight.id)) return;
+    migrated.add(oldFlight.id);
+
+    await this.deps.priceHistory.reassignFlight(oldFlight.id, newFlight.id);
+
+    // Append a marker entry that both notes the rebooking and anchors the new
+    // (lower) fare so the chart line continues from the carried-over history.
+    const isPoints = newFlight.originalCost.purchaseType === PurchaseType.Points;
+    const amount = isPoints ? newFlight.originalCost.points : newFlight.originalCost.cashUsd;
+    if (amount != null && Number.isFinite(amount)) {
+      const pointValueCents = this.pointValueCentsFor(newFlight.airline);
+      const valueUsd = isPoints ? (amount * pointValueCents) / 100 : amount;
+      await this.deps.priceHistory.append({
+        flightId: newFlight.id,
+        recordedAt: new Date().toISOString(),
+        purchaseType: newFlight.originalCost.purchaseType,
+        amount,
+        cashUsd: isPoints ? newFlight.originalMarketCashUsd : newFlight.originalCost.cashUsd,
+        points: isPoints ? newFlight.originalCost.points : undefined,
+        valueUsd,
+        rebooking: true,
+      });
+    }
+    log.info('Carried price history across cancel-and-rebook', {
+      from: oldFlight.id,
+      to: newFlight.id,
+      confirmation: newFlight.confirmationNumber,
+    });
+  }
+
+  /**
    * Find a cancelled leg that this newly-booked leg replaces: same origin,
    * destination and departure DATE (time may differ), an overlapping passenger
    * name, and a higher fare of the matching type than the new booking.
@@ -911,6 +979,62 @@ export class AppService {
   async listFlights(): Promise<FlightWithComparison[]> {
     const flights = await this.deps.flights.list();
     return Promise.all(flights.map((f) => this.toFlightWithComparison(f)));
+  }
+
+  /**
+   * Flights whose departure is in the past, for the Past Flights blade. For
+   * each, computes what was originally paid the first time it was booked, the
+   * final amount paid after any rebookings, and the resulting saving. The
+   * original/final are derived from the frozen original cost plus any recorded
+   * rebooking events (which also cover cancel-and-rebook under a new PNR).
+   */
+  async getPastFlights(): Promise<PastFlightView[]> {
+    const now = Date.now();
+    const flights = await this.deps.flights.list();
+    const past = flights.filter((f) => {
+      const t = Date.parse(f.departureDateTime);
+      return Number.isFinite(t) && t < now;
+    });
+
+    const out: PastFlightView[] = [];
+    for (const flight of past) {
+      const passenger = await this.deps.passengers.get(flight.passengerId);
+      const events = await this.deps.rebookEvents.listByFlight(flight.id);
+      const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
+      const baseNative = (isPoints ? flight.originalCost.points : flight.originalCost.cashUsd) ?? 0;
+
+      // The highest price ever paid (first booking or a cancelled fare) and the
+      // lowest actually paid (after rebookings). Rebooking events carry both the
+      // baseline and the rebooked amount, so combining them with the stored
+      // original cost yields the true first/final regardless of which path
+      // (same-PNR change or cancel+rebook) produced the saving.
+      const originals = [baseNative, ...events.map((e) => e.originalAmount)].filter(
+        (n) => Number.isFinite(n) && n > 0,
+      );
+      const finals = [baseNative, ...events.map((e) => e.newAmount)].filter(
+        (n) => Number.isFinite(n) && n > 0,
+      );
+      const originalAmount = originals.length ? Math.max(...originals) : baseNative;
+      const finalAmount = finals.length ? Math.min(...finals) : baseNative;
+      const savedAmount = Math.max(0, originalAmount - finalAmount);
+      const pointValueCents = this.pointValueCentsFor(flight.airline);
+      const savedValueUsd = isPoints ? (savedAmount * pointValueCents) / 100 : savedAmount;
+
+      out.push({
+        flight,
+        passengerName: passenger?.fullName ?? 'Unknown',
+        purchaseType: flight.originalCost.purchaseType,
+        originalAmount,
+        finalAmount,
+        savedAmount,
+        savedValueUsd,
+        rebookings: events.length,
+      });
+    }
+
+    // Most recently flown first.
+    out.sort((a, b) => Date.parse(b.flight.departureDateTime) - Date.parse(a.flight.departureDateTime));
+    return out;
   }
 
   async getFlight(id: string): Promise<FlightWithComparison | undefined> {

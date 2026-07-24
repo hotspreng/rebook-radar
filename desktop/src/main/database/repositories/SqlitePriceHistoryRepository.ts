@@ -9,6 +9,7 @@ interface HistoryRow {
   cash_usd: number | null;
   points: number | null;
   value_usd: number;
+  rebooking: number | null;
 }
 
 function toDomain(row: HistoryRow): PriceHistoryEntry {
@@ -20,6 +21,7 @@ function toDomain(row: HistoryRow): PriceHistoryEntry {
     cashUsd: row.cash_usd ?? undefined,
     points: row.points ?? undefined,
     valueUsd: row.value_usd,
+    rebooking: row.rebooking ? true : undefined,
   };
 }
 
@@ -27,8 +29,8 @@ export class SqlitePriceHistoryRepository implements PriceHistoryRepository {
   async append(entry: PriceHistoryEntry): Promise<void> {
     execute(
       `INSERT INTO price_history
-         (flight_id, recorded_at, purchase_type, amount, cash_usd, points, value_usd)
-       VALUES (:id, :recorded_at, :purchase_type, :amount, :cash_usd, :points, :value_usd)`,
+         (flight_id, recorded_at, purchase_type, amount, cash_usd, points, value_usd, rebooking)
+       VALUES (:id, :recorded_at, :purchase_type, :amount, :cash_usd, :points, :value_usd, :rebooking)`,
       {
         ':id': entry.flightId,
         ':recorded_at': entry.recordedAt,
@@ -37,6 +39,7 @@ export class SqlitePriceHistoryRepository implements PriceHistoryRepository {
         ':cash_usd': entry.cashUsd ?? null,
         ':points': entry.points ?? null,
         ':value_usd': entry.valueUsd,
+        ':rebooking': entry.rebooking ? 1 : null,
       },
     );
   }
@@ -59,5 +62,12 @@ export class SqlitePriceHistoryRepository implements PriceHistoryRepository {
 
   async deleteForFlight(flightId: string): Promise<void> {
     execute('DELETE FROM price_history WHERE flight_id = :id', { ':id': flightId });
+  }
+
+  async reassignFlight(fromFlightId: string, toFlightId: string): Promise<void> {
+    execute('UPDATE price_history SET flight_id = :to WHERE flight_id = :from', {
+      ':to': toFlightId,
+      ':from': fromFlightId,
+    });
   }
 }

@@ -18,6 +18,7 @@ export const IPC = {
 
   // Flights
   flightList: 'flight:list',
+  flightPast: 'flight:past',
   flightGet: 'flight:get',
   flightCreate: 'flight:create',
   flightUpdate: 'flight:update',

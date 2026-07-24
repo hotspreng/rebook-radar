@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS price_history (
   amount REAL,
   cash_usd REAL,
   points INTEGER,
-  value_usd REAL NOT NULL
+  value_usd REAL NOT NULL,
+  rebooking INTEGER
 );
 
 -- Realized rebooking savings. One row is appended when a tracked flight is
@@ -120,4 +121,5 @@ export const MIGRATIONS: { table: string; column: string; ddl: string }[] = [
   { table: 'flights', column: 'payments_json', ddl: 'ALTER TABLE flights ADD COLUMN payments_json TEXT' },
   { table: 'flights', column: 'original_market_cash_usd', ddl: 'ALTER TABLE flights ADD COLUMN original_market_cash_usd REAL' },
   { table: 'flights', column: 'airline', ddl: "ALTER TABLE flights ADD COLUMN airline TEXT NOT NULL DEFAULT 'southwest'" },
+  { table: 'price_history', column: 'rebooking', ddl: 'ALTER TABLE price_history ADD COLUMN rebooking INTEGER' },
 ];
