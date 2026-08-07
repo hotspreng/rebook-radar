@@ -202,6 +202,18 @@ export function Dashboard(): JSX.Element {
     });
   }, [flights, passengerFilter]);
 
+  // Legs sharing the edited flight's confirmation number, so the edit modal can
+  // offer manual per-leg amounts on round trips (>=2 legs).
+  const editingGroupLegs = useMemo<Flight[] | undefined>(() => {
+    const pnr = editing?.confirmationNumber;
+    if (!pnr) return undefined;
+    const legs = flights
+      .filter((f) => f.flight.confirmationNumber === pnr)
+      .map((f) => f.flight)
+      .sort((a, b) => a.departureDateTime.localeCompare(b.departureDateTime));
+    return legs.length >= 2 ? legs : undefined;
+  }, [editing, flights]);
+
   // Round trips are stored as separate legs sharing a confirmation number. Group
   // them so the cost columns can show the booking's true combined totals (e.g.
   // 42,000 pts) once, instead of a fabricated per-leg split.
@@ -797,6 +809,7 @@ export function Dashboard(): JSX.Element {
         <FlightFormModal
           passengers={passengers}
           existing={editing}
+          groupLegs={editingGroupLegs}
           onClose={() => setShowForm(false)}
           onSaved={refreshFlights}
         />

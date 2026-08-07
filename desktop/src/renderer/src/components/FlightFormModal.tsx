@@ -10,18 +10,22 @@ import {
 } from '@swr/core';
 import type { Passenger } from '@shared/dto';
 import { Button, Field, Modal, inputClass } from './ui.js';
-import { FARE_LABELS } from '../lib/format.js';
+import { FARE_LABELS, formatDateTime } from '../lib/format.js';
 
 const api = window.swr;
 
 interface Props {
   passengers: Passenger[];
   existing?: Flight;
+  /** All legs sharing this booking's confirmation number (>=2 = round trip). */
+  groupLegs?: Flight[];
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function FlightFormModal({ passengers, existing, onClose, onSaved }: Props): JSX.Element {
+type LegAmount = { points: string; cashUsd: string; taxes: string };
+
+export function FlightFormModal({ passengers, existing, groupLegs, onClose, onSaved }: Props): JSX.Element {
   const [passengerId, setPassengerId] = useState(existing?.passengerId ?? passengers[0]?.id ?? '');
   const [airline, setAirline] = useState<Airline>(existing?.airline ?? Airline.Southwest);
   const [confirmation, setConfirmation] = useState(existing?.confirmationNumber ?? '');
@@ -43,6 +47,27 @@ export function FlightFormModal({ passengers, existing, onClose, onSaved }: Prop
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const roundTripLegs = (groupLegs?.length ?? 0) >= 2 ? groupLegs! : undefined;
+  const isRoundTrip = roundTripLegs != null;
+  const [legAmounts, setLegAmounts] = useState<Record<string, LegAmount>>(() => {
+    const init: Record<string, LegAmount> = {};
+    for (const leg of roundTripLegs ?? []) {
+      init[leg.id] = {
+        points: leg.originalCost.points?.toString() ?? '',
+        cashUsd: leg.originalCost.cashUsd?.toString() ?? '',
+        taxes: leg.originalCost.taxesAndFeesUsd?.toString() ?? '0',
+      };
+    }
+    return init;
+  });
+
+  function setLegAmount(legId: string, field: keyof LegAmount, value: string): void {
+    setLegAmounts((prev) => ({
+      ...prev,
+      [legId]: { ...(prev[legId] ?? { points: '', cashUsd: '', taxes: '0' }), [field]: value },
+    }));
+  }
+
   const isPoints = purchaseType === PurchaseType.Points;
 
   async function handleSave(): Promise<void> {
@@ -53,6 +78,13 @@ export function FlightFormModal({ passengers, existing, onClose, onSaved }: Prop
 
     setSaving(true);
     try {
+      // For a round trip the current leg's amount comes from its per-leg inputs;
+      // for a single flight it comes from the shared amount fields.
+      const currentAmt =
+        isRoundTrip && existing ? legAmounts[existing.id] : undefined;
+      const currentLegPoints = currentAmt ? currentAmt.points : points;
+      const currentLegCash = currentAmt ? currentAmt.cashUsd : cashUsd;
+      const currentLegTaxes = currentAmt ? currentAmt.taxes : taxes;
       const base: NewFlight = {
         passengerId,
         airline,
@@ -65,9 +97,9 @@ export function FlightFormModal({ passengers, existing, onClose, onSaved }: Prop
         fareType,
         originalCost: {
           purchaseType,
-          cashUsd: isPoints ? undefined : Number(cashUsd) || 0,
-          points: isPoints ? Number(points) || 0 : undefined,
-          taxesAndFeesUsd: Number(taxes) || 0,
+          cashUsd: isPoints ? undefined : Number(currentLegCash) || 0,
+          points: isPoints ? Number(currentLegPoints) || 0 : undefined,
+          taxesAndFeesUsd: Number(currentLegTaxes) || 0,
         },
         bookingDate,
         source: existing?.source ?? FlightSource.Manual,
@@ -77,6 +109,24 @@ export function FlightFormModal({ passengers, existing, onClose, onSaved }: Prop
 
       if (existing) {
         await api.flights.update({ ...existing, ...base });
+        // Round trip: apply each leg's manually-entered amount to that leg. The
+        // confirmation email only carries the booking total, so this lets the
+        // user record the real per-leg split instead of the even estimate.
+        if (isRoundTrip && roundTripLegs) {
+          for (const leg of roundTripLegs) {
+            if (leg.id === existing.id) continue;
+            const amt = legAmounts[leg.id] ?? { points: '', cashUsd: '', taxes: '0' };
+            await api.flights.update({
+              ...leg,
+              originalCost: {
+                purchaseType,
+                cashUsd: isPoints ? undefined : Number(amt.cashUsd) || 0,
+                points: isPoints ? Number(amt.points) || 0 : undefined,
+                taxesAndFeesUsd: Number(amt.taxes) || 0,
+              },
+            });
+          }
+        }
       } else {
         await api.flights.create(base);
       }
@@ -166,18 +216,74 @@ export function FlightFormModal({ passengers, existing, onClose, onSaved }: Prop
             ))}
           </div>
         </Field>
-        {isPoints ? (
-          <Field label="Points paid">
-            <input className={inputClass} type="number" value={points} onChange={(e) => setPoints(e.target.value)} placeholder="12000" />
-          </Field>
+        {isRoundTrip ? (
+          <div className="col-span-2">
+            <p className="text-sm font-medium text-slate-200">Amount paid per leg</p>
+            <p className="mb-3 mt-0.5 text-xs text-slate-500">
+              The confirmation email only shows the booking total, so legs are split evenly by
+              default. Enter the actual {isPoints ? 'points' : 'cash'} and taxes paid for each leg.
+            </p>
+            <div className="space-y-3">
+              {roundTripLegs!.map((leg) => {
+                const amt = legAmounts[leg.id] ?? { points: '', cashUsd: '', taxes: '0' };
+                return (
+                  <div key={leg.id} className="rounded-lg border border-slate-700 p-3">
+                    <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-slate-300">
+                      <span className="font-medium">
+                        {leg.route.origin.code} → {leg.route.destination.code}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {formatDateTime(leg.departureDateTime)}
+                      </span>
+                      {existing?.id === leg.id && (
+                        <span className="text-[11px] text-brand-300">(editing)</span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label={isPoints ? 'Points paid' : 'Cash paid (USD)'}>
+                        <input
+                          className={inputClass}
+                          type="number"
+                          step={isPoints ? '1' : '0.01'}
+                          value={isPoints ? amt.points : amt.cashUsd}
+                          onChange={(e) =>
+                            setLegAmount(leg.id, isPoints ? 'points' : 'cashUsd', e.target.value)
+                          }
+                          placeholder={isPoints ? '12000' : '149.98'}
+                        />
+                      </Field>
+                      <Field label="Taxes & fees (USD)">
+                        <input
+                          className={inputClass}
+                          type="number"
+                          step="0.01"
+                          value={amt.taxes}
+                          onChange={(e) => setLegAmount(leg.id, 'taxes', e.target.value)}
+                          placeholder="5.60"
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         ) : (
-          <Field label="Cash paid (USD)">
-            <input className={inputClass} type="number" step="0.01" value={cashUsd} onChange={(e) => setCashUsd(e.target.value)} placeholder="149.98" />
-          </Field>
+          <>
+            {isPoints ? (
+              <Field label="Points paid">
+                <input className={inputClass} type="number" value={points} onChange={(e) => setPoints(e.target.value)} placeholder="12000" />
+              </Field>
+            ) : (
+              <Field label="Cash paid (USD)">
+                <input className={inputClass} type="number" step="0.01" value={cashUsd} onChange={(e) => setCashUsd(e.target.value)} placeholder="149.98" />
+              </Field>
+            )}
+            <Field label="Taxes & fees (USD)">
+              <input className={inputClass} type="number" step="0.01" value={taxes} onChange={(e) => setTaxes(e.target.value)} placeholder="5.60" />
+            </Field>
+          </>
         )}
-        <Field label="Taxes & fees (USD)">
-          <input className={inputClass} type="number" step="0.01" value={taxes} onChange={(e) => setTaxes(e.target.value)} placeholder="5.60" />
-        </Field>
         <div className="col-span-2">
           <Field label="Notes">
             <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
