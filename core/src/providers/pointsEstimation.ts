@@ -54,3 +54,28 @@ export function estimatePointsFromCash(
   // Southwest prices award seats in whole points; round to a tidy increment.
   return Math.round(rawPoints / 10) * 10;
 }
+
+/**
+ * Derive a flight's OWN redemption rate (USD per point) from what it actually
+ * cost: the real market cash fare observed near booking vs. the points spent.
+ * This is more accurate than a global setting for that specific booking, so the
+ * current points estimate tracks the fare using the same value the traveler
+ * actually got (e.g. 8,500 pts for a $161 fare ⇒ ~1.83¢/pt).
+ *
+ * @returns USD per point, or `undefined` when the inputs can't produce a rate.
+ */
+export function impliedCentsPerPoint(
+  marketCashUsd: number | undefined,
+  points: number | undefined,
+  awardTaxesUsd = DEFAULT_AWARD_TAXES_USD,
+): number | undefined {
+  if (marketCashUsd == null || !Number.isFinite(marketCashUsd) || marketCashUsd <= 0) return undefined;
+  if (points == null || !Number.isFinite(points) || points <= 0) return undefined;
+
+  const taxes = Number.isFinite(awardTaxesUsd) ? awardTaxesUsd : DEFAULT_AWARD_TAXES_USD;
+  // Points only cover the base fare; the traveler still pays taxes/fees in cash.
+  const baseFareUsd = Math.max(marketCashUsd - taxes, 0);
+  if (baseFareUsd <= 0) return undefined;
+
+  return baseFareUsd / points;
+}

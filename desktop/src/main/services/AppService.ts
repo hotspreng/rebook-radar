@@ -12,6 +12,7 @@ import {
   Recommendation,
   SouthwestProvider,
   estimatePointsFromCash,
+  impliedCentsPerPoint,
   exportFlightsToCsv,
   fetchSerpApiUsage,
   generateId,
@@ -1124,9 +1125,19 @@ export class AppService {
         continue;
       }
 
-      // Estimate award points from the stored cash fare using the airline's
-      // cents-per-point rate the user values points at (no API call).
-      const estimation = { centsPerPoint: this.pointValueCentsFor(flight.airline) / 100 };
+      // Estimate award points from the stored cash fare. Prefer the flight's
+      // OWN redemption rate when we captured its real market cash fare (e.g.
+      // 8,500 pts / $161), so retuning the global rate doesn't override a
+      // booking whose actual conversion we already know.
+      const impliedRate = impliedCentsPerPoint(
+        flight.originalMarketCashUsd,
+        flight.originalCost.points,
+        flight.originalCost.taxesAndFeesUsd,
+      );
+      const estimation = {
+        centsPerPoint: impliedRate ?? this.pointValueCentsFor(flight.airline) / 100,
+        ...(impliedRate != null ? { awardTaxesUsd: flight.originalCost.taxesAndFeesUsd } : {}),
+      };
       const options = this.comparisonOptions(flight.airline);
       const reEstimated = {
         ...quote,
