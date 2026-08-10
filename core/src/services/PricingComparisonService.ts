@@ -140,11 +140,13 @@ export class PricingComparisonService {
    * (originalMarketCashUsd — only recorded for purchases made within ~48h), the
    * booking itself reveals THIS flight's real points-to-cash conversion
    * (originalPoints ÷ actualCash). We anchor on that flight-specific rate rather
-   * than the generic settings cents-per-point estimate:
-   *   - current cash ≥ the cash at booking → points unchanged (no savings).
-   *   - current cash <  the cash at booking → points drop proportionally.
-   * This prevents the generic rate from inflating the points estimate (and
-   * showing a phantom increase) when the cash fare has actually fallen.
+   * than the generic settings cents-per-point estimate, and scale the points
+   * with the current cash fare in BOTH directions:
+   *   - current cash fell below the cash at booking → points drop proportionally.
+   *   - current cash rose above the cash at booking → points rise proportionally
+   *     (the same seat now costs more points, so rebooking would be worse).
+   * This keeps the current points estimate faithful to the fare the traveler
+   * actually locked in (e.g. 8,500 pts / $161 ⇒ $211 now ≈ 11,140 pts).
    *
    * Without a captured actual cash fare, fall back to a real points quote, then
    * to converting the cash quote at the generic settings rate.
@@ -157,7 +159,6 @@ export class PricingComparisonService {
     const originalPoints = flight.originalCost.points ?? 0;
     const actualCash = flight.originalMarketCashUsd;
     if (actualCash != null && actualCash > 0 && originalPoints > 0 && quote.cashUsd != null) {
-      if (quote.cashUsd >= actualCash) return originalPoints;
       return Math.round((originalPoints * quote.cashUsd) / actualCash);
     }
     if (quote.points != null) return quote.points;

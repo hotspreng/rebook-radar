@@ -92,6 +92,46 @@ test('points fare drop above threshold recommends Rebook', () => {
   assert.equal(result.savingsNative, 3000);
 });
 
+test('points fare with captured actual cash scales current points up when the fare rises', () => {
+  // Booked 8,500 pts when the real market cash fare was $161. The current cash
+  // fare has risen to $211, so the same seat now costs MORE points.
+  const flight = makeFlight({
+    originalCost: { purchaseType: PurchaseType.Points, points: 8500, taxesAndFeesUsd: 5.6 },
+    originalMarketCashUsd: 161,
+  });
+  const quote = makeQuote({ cashUsd: 211, points: 8500, pointsEstimated: true });
+  const result = service.compare(flight, quote, {
+    pointValueCents: 1.4,
+    savingsThresholdUsd: 25,
+    savingsThresholdPoints: 2000,
+    now: fixedNow,
+  });
+
+  // 8,500 * 211 / 161 ≈ 11,140 — higher than booked, so no savings → Keep.
+  assert.equal(result.currentAmount, Math.round((8500 * 211) / 161));
+  assert.ok(result.currentAmount != null && result.currentAmount > 8500);
+  assert.ok(result.savingsNative != null && result.savingsNative < 0);
+  assert.equal(result.recommendation, Recommendation.Keep);
+});
+
+test('points fare with captured actual cash scales current points down when the fare falls', () => {
+  const flight = makeFlight({
+    originalCost: { purchaseType: PurchaseType.Points, points: 8500, taxesAndFeesUsd: 5.6 },
+    originalMarketCashUsd: 161,
+  });
+  const quote = makeQuote({ cashUsd: 120, points: 8500, pointsEstimated: true });
+  const result = service.compare(flight, quote, {
+    pointValueCents: 1.4,
+    savingsThresholdUsd: 25,
+    savingsThresholdPoints: 2000,
+    now: fixedNow,
+  });
+
+  assert.equal(result.currentAmount, Math.round((8500 * 120) / 161));
+  assert.ok(result.currentAmount != null && result.currentAmount < 8500);
+  assert.ok(result.savingsNative != null && result.savingsNative > 0);
+});
+
 test('missing quote yields Unknown recommendation', () => {
   const flight = makeFlight();
   const result = service.compare(flight, undefined, {

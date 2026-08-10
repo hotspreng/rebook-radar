@@ -4,7 +4,6 @@ import {
   DEFAULT_AWARD_TAXES_USD,
   DEFAULT_CENTS_PER_POINT,
   estimatePointsFromCash,
-  impliedCentsPerPoint,
 } from './pointsEstimation.js';
 
 test('returns undefined for missing or non-positive cash', () => {
@@ -40,30 +39,4 @@ test('honors a custom award taxes amount', () => {
 
 test('rejects a non-positive rate', () => {
   assert.equal(estimatePointsFromCash(200, { centsPerPoint: 0 }), undefined);
-});
-
-test('impliedCentsPerPoint derives a booking rate from actual cash + points', () => {
-  // $161 market fare, $5.60 taxes, 8,500 pts -> (161 - 5.60) / 8500 dollars/pt.
-  const rate = impliedCentsPerPoint(161, 8500, 5.6);
-  assert.ok(rate != null);
-  assert.ok(Math.abs(rate! - (161 - 5.6) / 8500) < 1e-9);
-});
-
-test('impliedCentsPerPoint returns undefined without both actual values', () => {
-  assert.equal(impliedCentsPerPoint(undefined, 8500, 5.6), undefined);
-  assert.equal(impliedCentsPerPoint(161, undefined, 5.6), undefined);
-  assert.equal(impliedCentsPerPoint(0, 8500, 5.6), undefined);
-  assert.equal(impliedCentsPerPoint(161, 0, 5.6), undefined);
-  // Cash only covers taxes -> no base fare left to value.
-  assert.equal(impliedCentsPerPoint(5.6, 8500, 5.6), undefined);
-});
-
-test('current points rise when cash rises, using the booking rate', () => {
-  // Booked 8,500 pts @ $161 market. Current cash $211 should imply MORE points.
-  const rate = impliedCentsPerPoint(161, 8500, 5.6)!;
-  const currentPts = estimatePointsFromCash(211, { centsPerPoint: rate, awardTaxesUsd: 5.6 });
-  assert.ok(currentPts != null && currentPts > 8500);
-  // (211 - 5.60) / rate / 10 rounded * 10
-  const expected = Math.round((211 - 5.6) / rate / 10) * 10;
-  assert.equal(currentPts, expected);
 });

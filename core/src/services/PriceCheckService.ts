@@ -5,7 +5,6 @@ import {
   AirlineSession,
   FlightSearchResult,
 } from '../providers/AirlineProvider.js';
-import { estimatePointsFromCash, impliedCentsPerPoint } from '../providers/pointsEstimation.js';
 import { Logger, logger as defaultLogger } from '../utils/logger.js';
 import {
   ComparisonOptions,
@@ -127,7 +126,7 @@ export class PriceCheckService {
       flightId: flight.id,
       fareType: result.fareType ?? FareType.Unknown,
       cashUsd: result.cashUsd,
-      points: this.estimatePointsForFlight(flight, result.cashUsd, result.pointsEstimated, result.points),
+      points: result.points,
       pointsEstimated: result.pointsEstimated,
       pointsTaxesAndFeesUsd: result.pointsTaxesAndFeesUsd,
       departureDateTime: result.departureDateTime,
@@ -138,34 +137,6 @@ export class PriceCheckService {
       preferredPurchaseType: flight.originalCost.purchaseType,
       alternatives: this.buildAlternatives(flight, allResults),
     };
-  }
-
-  /**
-   * When a flight was booked with points AND we captured its real market cash
-   * fare, estimate the CURRENT points from the current cash using that booking's
-   * own redemption rate (e.g. 8,500 pts / $161) instead of the global Settings
-   * rate. Falls back to the provider's estimate when no per-flight rate exists
-   * or the points figure is a real (non-estimated) quote.
-   */
-  private estimatePointsForFlight(
-    flight: Flight,
-    cashUsd: number | undefined,
-    estimated: boolean | undefined,
-    providerPoints: number | undefined,
-  ): number | undefined {
-    if (!estimated || cashUsd == null) return providerPoints;
-    const implied = impliedCentsPerPoint(
-      flight.originalMarketCashUsd,
-      flight.originalCost.points,
-      flight.originalCost.taxesAndFeesUsd,
-    );
-    if (implied == null) return providerPoints;
-    return (
-      estimatePointsFromCash(cashUsd, {
-        centsPerPoint: implied,
-        awardTaxesUsd: flight.originalCost.taxesAndFeesUsd,
-      }) ?? providerPoints
-    );
   }
 
   /**
@@ -197,7 +168,7 @@ export class PriceCheckService {
         arrivalDateTime: r.arrivalDateTime,
         fareType: r.fareType ?? FareType.Unknown,
         cashUsd: r.cashUsd,
-        points: this.estimatePointsForFlight(flight, r.cashUsd, r.pointsEstimated, r.points),
+        points: r.points,
         pointsEstimated: r.pointsEstimated,
         pointsTaxesAndFeesUsd: r.pointsTaxesAndFeesUsd,
         stops: r.stops,
