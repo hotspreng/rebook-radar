@@ -33,9 +33,6 @@ export function loadAppConfig(): AppConfig {
     savingsAlertThresholdUsd: num(process.env.SAVINGS_ALERT_THRESHOLD_USD, 25),
     savingsAlertThresholdPoints: num(process.env.SAVINGS_ALERT_THRESHOLD_POINTS, 2000),
     defaultPointValueCents: num(process.env.DEFAULT_POINT_VALUE_CENTS, 1.4),
-    scraperHeadful: bool(process.env.SCRAPER_HEADFUL, false),
-    scraperTimeoutMs: num(process.env.SCRAPER_TIMEOUT_MS, 45_000),
-    southwestBaseUrl: process.env.SOUTHWEST_BASE_URL || 'https://www.southwest.com',
     keychainService: process.env.KEYCHAIN_SERVICE || 'SouthwestRebooker',
   });
 }

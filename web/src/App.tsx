@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   Airline,
-  FakeSouthwestScraperClient,
   FareType,
   FlightSource,
   PriceCheckService,
   PurchaseType,
-  SouthwestProvider,
+  type AirlineProvider,
   type Flight,
   type PriceComparison,
 } from '@swr/core';
@@ -15,9 +14,9 @@ import {
  * Minimal proof-of-portability web client.
  *
  * It imports the SAME `@swr/core` package the desktop app uses and runs the
- * pricing engine + Southwest provider entirely in the browser, here using the
- * built-in FakeSouthwestScraperClient (a real web app would swap in an HTTP/API
- * based client implementing `SouthwestScraperClient` or `AirlineProvider`).
+ * pricing engine entirely in the browser, here backed by a tiny inline demo
+ * provider (a real web app would swap in an HTTP/API based client implementing
+ * `AirlineProvider`).
  *
  * No Electron, Node, or DB code is referenced — demonstrating that all business
  * logic lives in /core and is framework-agnostic.
@@ -39,15 +38,40 @@ const sampleFlight: Flight = {
   updatedAt: '2026-05-01T00:00:00Z',
 };
 
+/** Inline demo provider returning a single lower-priced fare for the sample flight. */
+const demoProvider: AirlineProvider = {
+  id: 'demo',
+  name: 'Demo',
+  async login() {
+    throw new Error('Not supported in the web preview.');
+  },
+  async getUpcomingTrips() {
+    return [];
+  },
+  async searchPrice() {
+    return [
+      {
+        departureDateTime: sampleFlight.departureDateTime,
+        fareType: FareType.WannaGetAway,
+        points: 9000,
+        pointsTaxesAndFeesUsd: 5.6,
+        stops: 0,
+      },
+    ];
+  },
+  async logout() {
+    /* no-op */
+  },
+};
+
 export function App(): JSX.Element {
   const [comparison, setComparison] = useState<PriceComparison | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function runCheck(): Promise<void> {
     setLoading(true);
-    const provider = new SouthwestProvider(new FakeSouthwestScraperClient());
     const service = new PriceCheckService();
-    const result = await service.check(sampleFlight, provider, undefined, {
+    const result = await service.check(sampleFlight, demoProvider, undefined, {
       pointValueCents: 1.4,
       savingsThresholdUsd: 25,
       savingsThresholdPoints: 2000,

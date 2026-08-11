@@ -2,7 +2,7 @@
  * @swr/core — framework-agnostic business logic for Rebook Radar.
  *
  * Import everything UI/host layers need from here:
- *   import { PricingComparisonService, SouthwestProvider } from '@swr/core';
+ *   import { PricingComparisonService, GoogleFlightsSerpApiProvider } from '@swr/core';
  */
 export * from './models/index.js';
 export * from './services/index.js';

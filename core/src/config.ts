@@ -19,11 +19,6 @@ export interface AppConfig {
   /** Default points valuation (cents per point) for cash-equivalent display. */
   defaultPointValueCents: number;
 
-  /** Scraper options. */
-  scraperHeadful: boolean;
-  scraperTimeoutMs: number;
-  southwestBaseUrl: string;
-
   /** OS keychain service name. */
   keychainService: string;
 }
@@ -35,9 +30,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   savingsAlertThresholdUsd: 25,
   savingsAlertThresholdPoints: 2000,
   defaultPointValueCents: 1.4,
-  scraperHeadful: false,
-  scraperTimeoutMs: 45_000,
-  southwestBaseUrl: 'https://www.southwest.com',
   keychainService: 'SouthwestRebooker',
 };
 

@@ -3,14 +3,12 @@ import {
   Airline,
   AirlineProvider,
   EmailTripImportService,
-  FakeSouthwestScraperClient,
   FlightSource,
   GoogleFlightsSerpApiProvider,
   PriceCheckService,
   PricingComparisonService,
   PurchaseType,
   Recommendation,
-  SouthwestProvider,
   estimatePointsFromCash,
   exportFlightsToCsv,
   fetchSerpApiUsage,
@@ -44,7 +42,6 @@ import {
 import { logger } from '@swr/core';
 import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
-import { PlaywrightSouthwestClient } from '../scraping/PlaywrightSouthwestClient.js';
 import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
 import type { SettingsStore } from './SettingsStore.js';
 import { writeFileSync } from 'node:fs';
@@ -163,10 +160,8 @@ export interface AppServiceDeps {
   priceHistory: PriceHistoryRepository;
   rebookEvents: RebookEventRepository;
   secrets: SecretStore;
-  /** Directory where the scraper writes debug screenshots/HTML. */
+  /** Directory where debug artifacts (raw email/page dumps) are written. */
   debugDir: string;
-  /** Dedicated persistent browser profile dir for scraping (Akamai trust). */
-  scraperProfileDir: string;
   /** Opens a URL in the user's default browser (used for Gmail OAuth consent). */
   openExternal: (url: string) => Promise<void>;
   /** Reports live progress while an email import runs (main → renderer). */
@@ -1224,25 +1219,6 @@ export class AppService {
     return exportFlightsToCsv(rows);
   }
 
-  /**
-   * Open the scraper profile headfully so the user can complete one manual
-   * search, warming Akamai's trust cookies. Required once before automated
-   * "Check all prices" runs will succeed.
-   */
-  async warmScraperProfile(): Promise<{ warmed: boolean }> {
-    const s = this.deps.settings.get();
-    const client = new PlaywrightSouthwestClient({
-      baseUrl: this.deps.config.southwestBaseUrl,
-      headful: true,
-      channel: s.scraperBrowserChannel === 'chromium' ? undefined : s.scraperBrowserChannel,
-      timeoutMs: this.deps.config.scraperTimeoutMs,
-      debugDir: this.deps.debugDir,
-      debugMode: s.debugMode,
-      profileDir: this.deps.scraperProfileDir,
-    });
-    return client.warmupProfile();
-  }
-
   // --- Reporting -----------------------------------------------------------
 
   /**
@@ -1460,54 +1436,32 @@ export class AppService {
     };
   }
 
-  /** Build the airline provider based on current settings (real vs fake). */
+  /** Build the airline provider. Google Flights via SerpApi is the sole fare source. */
   private createProvider(airline: Airline = Airline.Southwest): AirlineProvider {
-    const s = this.deps.settings.get();
     // Estimate points from a cash fare using the user's cents-per-point rate, so
     // estimates track the airline's actual award pricing. Tunable in Settings.
     const estimation = { centsPerPoint: this.pointValueCentsFor(airline) / 100 };
-    if (s.scrapingEnabled && s.fareSource === 'serpapi') {
-      return new GoogleFlightsSerpApiProvider({
-        // Keep only itineraries flown by this flight's airline so a United
-        // price check never matches a cheaper Southwest fare and vice-versa.
-        airlineName: AIRLINE_LABELS[airline],
-        fetchJson: async (url) => {
-          // SerpApi runs the Google Flights search live, so allow generous time
-          // but never hang forever (Node has no default fetch timeout).
-          const res = await fetch(url, { signal: AbortSignal.timeout(45_000) });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
-        },
-        getApiKeys: async () => {
-          const keys = await Promise.all(
-            SERPAPI_SECRET_ACCOUNTS.map((account) => this.deps.secrets.getPassword(account)),
-          );
-          return keys
-            .map((k) => k?.trim())
-            .filter((k): k is string => k != null && k.length > 0);
-        },
-        estimation,
-      });
-    }
-    if (s.scrapingEnabled) {
-      const client = new PlaywrightSouthwestClient({
-        baseUrl: this.deps.config.southwestBaseUrl,
-        headful: s.scraperHeadful,
-        // 'chromium' means "use the bundled build" — pass no channel.
-        channel: s.scraperBrowserChannel === 'chromium' ? undefined : s.scraperBrowserChannel,
-        timeoutMs: this.deps.config.scraperTimeoutMs,
-        debugDir: this.deps.debugDir,
-        debugMode: s.debugMode,
-        // Reuse one warmed persistent profile so Southwest's Akamai bot manager
-        // trusts the automated searches (no per-run block).
-        profileDir: this.deps.scraperProfileDir,
-        // When the browser is visible, let the user complete login + any
-        // "Press & Hold" bot challenge manually before we read trips.
-        assistedLogin: s.scraperHeadful,
-      });
-      return new SouthwestProvider(client, undefined, estimation);
-    }
-    return new SouthwestProvider(new FakeSouthwestScraperClient(), undefined, estimation);
+    return new GoogleFlightsSerpApiProvider({
+      // Keep only itineraries flown by this flight's airline so a United
+      // price check never matches a cheaper Southwest fare and vice-versa.
+      airlineName: AIRLINE_LABELS[airline],
+      fetchJson: async (url) => {
+        // SerpApi runs the Google Flights search live, so allow generous time
+        // but never hang forever (Node has no default fetch timeout).
+        const res = await fetch(url, { signal: AbortSignal.timeout(45_000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      },
+      getApiKeys: async () => {
+        const keys = await Promise.all(
+          SERPAPI_SECRET_ACCOUNTS.map((account) => this.deps.secrets.getPassword(account)),
+        );
+        return keys
+          .map((k) => k?.trim())
+          .filter((k): k is string => k != null && k.length > 0);
+      },
+      estimation,
+    });
   }
 
   private async requireAccount(id: string): Promise<Account> {

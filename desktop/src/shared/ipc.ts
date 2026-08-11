@@ -32,7 +32,6 @@ export const IPC = {
   // Settings
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
-  settingsWarmScraperProfile: 'settings:warmScraperProfile',
   settingsSetSerpApiKey: 'settings:setSerpApiKey',
   settingsSerpApiUsage: 'settings:serpApiUsage',
 

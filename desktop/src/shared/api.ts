@@ -71,7 +71,6 @@ export interface SwrApi {
   settings: {
     get(): Promise<AppSettings>;
     update(settings: Partial<AppSettings>): Promise<AppSettings>;
-    warmScraperProfile(): Promise<{ warmed: boolean }>;
     setSerpApiKey(slot: number, key: string): Promise<AppSettings>;
     serpApiUsage(): Promise<SerpApiKeyUsage[]>;
   };

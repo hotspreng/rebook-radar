@@ -32,22 +32,6 @@ export interface AppSettings {
   savingsAlertThresholdUsd: number;
   savingsAlertThresholdPoints: number;
   monitoringEnabled: boolean;
-  /** Enable real Playwright scraping. When false, the fake provider is used. */
-  scrapingEnabled: boolean;
-  scraperHeadful: boolean;
-  /**
-   * Which browser the scraper drives. 'chrome'/'msedge' use the installed
-   * browser (recommended — no download, less bot detection); 'chromium' uses
-   * Playwright's bundled build.
-   */
-  scraperBrowserChannel: 'chrome' | 'msedge' | 'chromium';
-  /**
-   * Where live fares come from when scraping is enabled:
-   *  - 'scraper': drive a browser against southwest.com (reads real points).
-   *  - 'serpapi': query the SerpApi Google Flights API for the CASH fare and
-   *     estimate points (Southwest award pricing isn't published to third parties).
-   */
-  fareSource: 'scraper' | 'serpapi';
   /**
    * Which SerpApi key slots have a key stored (mirrors secure-store state).
    * Up to 3 keys; the provider rotates to the next when one runs out of free

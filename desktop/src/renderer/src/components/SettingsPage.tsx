@@ -12,7 +12,6 @@ export function SettingsPage(): JSX.Element {
   const { settings, monitor, passengers, refreshPassengers, updateSettings, pushToast } = useAppStore();
   const [draft, setDraft] = useState<AppSettings | null>(settings);
   const [saving, setSaving] = useState(false);
-  const [warming, setWarming] = useState(false);
   const [showPassengerForm, setShowPassengerForm] = useState(false);
 
   async function handleDeletePassenger(p: Passenger): Promise<void> {
@@ -48,19 +47,6 @@ export function SettingsPage(): JSX.Element {
     await updateSettings(draft);
     setSaving(false);
     pushToast('success', 'Settings saved.');
-  }
-
-  async function handleWarmProfile(): Promise<void> {
-    setWarming(true);
-    pushToast('info', 'Opening Southwest… do one manual search, then close the window.');
-    try {
-      await api.settings.warmScraperProfile();
-      pushToast('success', 'Scraper profile warmed. Automated price checks should work now.');
-    } catch (err) {
-      pushToast('error', `Could not warm profile: ${String(err)}`);
-    } finally {
-      setWarming(false);
-    }
   }
 
   return (
@@ -216,106 +202,24 @@ export function SettingsPage(): JSX.Element {
         <Card className="px-6 py-5">
           <h2 className="mb-1 text-sm font-semibold text-slate-200">Live price source</h2>
           <p className="mb-4 text-xs text-slate-500">
-            How current fares are fetched. <strong>SerpApi (Google Flights)</strong> reads Southwest
-            cash fares via an API and estimates the points cost — reliable, no bot checks.
-            <strong> Scraper</strong> drives a browser against southwest.com to read real points
-            (often blocked by Southwest&apos;s bot protection).
+            Current fares are fetched via <strong>SerpApi (Google Flights)</strong>, which reads
+            Southwest cash fares through an API and estimates the points cost — reliable, with no
+            bot checks. Southwest award (points) pricing isn&apos;t published to third parties, so
+            the points value is estimated from the cash fare.
           </p>
-          <label className="flex items-center justify-between gap-4">
-            <span className="text-sm text-slate-200">
-              Source
-              <span className="mt-0.5 block text-xs text-slate-500">
-                Southwest award (points) pricing isn&apos;t published to third parties, so SerpApi
-                returns an estimated points value from the cash fare.
-              </span>
-            </span>
-            <select
-              className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200"
-              value={draft.fareSource}
-              onChange={(e) => setPersist('fareSource', e.target.value as 'scraper' | 'serpapi')}
-            >
-              <option value="serpapi">SerpApi (Google Flights)</option>
-              <option value="scraper">Scraper (southwest.com)</option>
-            </select>
-          </label>
-          {draft.fareSource === 'serpapi' && (
-            <div className="mt-4 space-y-4">
-              <SerpApiKeyEditor
-                slots={draft.serpApiKeys}
-                onSaved={(next) => setDraft(next)}
-              />
-            </div>
-          )}
-        </Card>
-
-        <Card className="px-6 py-5">
-          <h2 className="mb-1 text-sm font-semibold text-slate-200">Live price scraping (southwest.com)</h2>
-          <p className="mb-4 text-xs text-slate-500">
-            Reads real-time fares/points by driving a browser. These options save immediately. Use
-            headful + Installed Chrome for best results against Southwest&apos;s bot checks.
-          </p>
-          <Toggle
-            label="Enable Southwest scraping (Playwright)"
-            description="Drives a real browser to read live southwest.com prices. May trip anti-bot checks."
-            checked={draft.scrapingEnabled}
-            onChange={(v) => setPersist('scrapingEnabled', v)}
-          />
-          <div className="mt-3">
-            <Toggle
-              label="Show browser while scraping (headful)"
-              description="Useful to solve CAPTCHA or debug login. Slower."
-              checked={draft.scraperHeadful}
-              onChange={(v) => setPersist('scraperHeadful', v)}
+          <div className="space-y-4">
+            <SerpApiKeyEditor
+              slots={draft.serpApiKeys}
+              onSaved={(next) => setDraft(next)}
             />
           </div>
-          <div className="mt-3">
-            <label className="flex items-center justify-between gap-4">
-              <span className="text-sm text-slate-200">
-                Browser
-                <span className="mt-0.5 block text-xs text-slate-500">
-                  Use your installed Chrome/Edge (no download, fewer bot checks) or Playwright&apos;s
-                  bundled Chromium.
-                </span>
-              </span>
-              <select
-                className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-200"
-                value={draft.scraperBrowserChannel}
-                onChange={(e) =>
-                  setPersist(
-                    'scraperBrowserChannel',
-                    e.target.value as 'chrome' | 'msedge' | 'chromium',
-                  )
-                }
-              >
-                <option value="chrome">Installed Chrome</option>
-                <option value="msedge">Installed Edge</option>
-                <option value="chromium">Bundled Chromium</option>
-              </select>
-            </label>
-          </div>
-          <div className="mt-3">
+          <div className="mt-4 border-t border-slate-800 pt-4">
             <Toggle
               label="Debug logging"
               description="Verbose logs and raw email/page dumps for tuning (credentials always redacted)."
               checked={draft.debugMode}
               onChange={(v) => setPersist('debugMode', v)}
             />
-          </div>
-          <div className="mt-4 rounded border border-slate-700 bg-slate-800/40 px-3 py-3">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-slate-200">Warm up scraper profile</p>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Run this once before automated checks. It opens Southwest in a dedicated browser
-                  profile — do one manual flight search, then close the window. This stores the
-                  trust cookies that let automated price checks through.
-                </p>
-              </div>
-              <Button onClick={handleWarmProfile} disabled={warming || !draft.scrapingEnabled}>
-                <RefreshCw size={16} className={warming ? 'animate-spin' : undefined} />
-                {warming ? 'Warming…' : 'Warm up'}
-              </Button>
-            </div>
           </div>
         </Card>
       </div>

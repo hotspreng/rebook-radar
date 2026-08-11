@@ -65,7 +65,6 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
     else monitor.stop();
     return next;
   });
-  handle(IPC.settingsWarmScraperProfile, () => service.warmScraperProfile());
   handle<{ slot: number; key: string }>(IPC.settingsSetSerpApiKey, ({ slot, key }) =>
     service.setSerpApiKey(slot, key),
   );

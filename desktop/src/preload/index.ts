@@ -71,8 +71,6 @@ const api: SwrApi = {
   settings: {
     get: () => invoke<AppSettings>(IPC.settingsGet),
     update: (settings: Partial<AppSettings>) => invoke<AppSettings>(IPC.settingsUpdate, settings),
-    warmScraperProfile: () =>
-      invoke<{ warmed: boolean }>(IPC.settingsWarmScraperProfile),
     setSerpApiKey: (slot: number, key: string) =>
       invoke<AppSettings>(IPC.settingsSetSerpApiKey, { slot, key }),
     serpApiUsage: () => invoke<SerpApiKeyUsage[]>(IPC.settingsSerpApiUsage),

@@ -58,15 +58,9 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
   const secrets = new SafeStorageSecretStore();
   const notifier = new Notifier();
 
-  // Scraper debug artifacts (screenshots + HTML) land here.
+  // Debug artifacts (raw email/page dumps when debug logging is on) land here.
   const debugDir = join(app.getPath('userData'), 'debug');
   mkdirSync(debugDir, { recursive: true });
-
-  // Dedicated persistent browser profile for scraping. Reusing one warmed
-  // profile keeps Southwest's Akamai trust cookies so automated searches aren't
-  // blocked. This is separate from the user's everyday Chrome profile.
-  const scraperProfileDir = join(app.getPath('userData'), 'scraper-profile');
-  mkdirSync(scraperProfileDir, { recursive: true });
 
   const service = new AppService({
     config,
@@ -79,7 +73,6 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
     rebookEvents,
     secrets,
     debugDir,
-    scraperProfileDir,
     openExternal: (url: string) => shell.openExternal(url),
     onEmailProgress: emit.emailProgress,
     onPriceCheckProgress: emit.priceCheckProgress,
