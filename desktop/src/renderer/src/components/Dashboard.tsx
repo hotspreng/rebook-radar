@@ -127,7 +127,6 @@ export function Dashboard(): JSX.Element {
     checkOne,
     refreshFlights,
     pushToast,
-    settings,
   } = useAppStore();
 
   const [showForm, setShowForm] = useState(false);
@@ -214,26 +213,14 @@ export function Dashboard(): JSX.Element {
     return legs.length >= 2 ? legs : undefined;
   }, [editing, flights]);
 
-  // Round trips are stored as separate legs sharing a confirmation number. Group
-  // them so the cost columns can show the booking's true combined totals (e.g.
-  // 42,000 pts) once, instead of a fabricated per-leg split.
+  // Round trips are stored as separate legs sharing a confirmation number. We
+  // still track the grouping so each leg can be labeled outbound/return and so a
+  // single click can re-price both legs — but each leg now shows its OWN edited
+  // points and its own price comparison (outbound and return side by side).
   const bookingGroups = useMemo(() => {
     const m = new Map<
       string,
-      {
-        count: number;
-        firstLegId: string;
-        legIds: string[];
-        points: number;
-        cashUsd: number;
-        valueUsd: number;
-        marketCashUsd: number;
-        marketCashCount: number;
-        currentAmount: number;
-        savingsNative: number;
-        quoted: number;
-        rebook: boolean;
-      }
+      { count: number; legIds: string[]; outboundLegId: string; outboundDeparture: string }
     >();
     for (const it of filtered) {
       const pnr = it.flight.confirmationNumber;
@@ -241,48 +228,20 @@ export function Dashboard(): JSX.Element {
       const g =
         m.get(pnr) ?? {
           count: 0,
-          firstLegId: it.flight.id,
           legIds: [],
-          points: 0,
-          cashUsd: 0,
-          valueUsd: 0,
-          marketCashUsd: 0,
-          marketCashCount: 0,
-          currentAmount: 0,
-          savingsNative: 0,
-          quoted: 0,
-          rebook: false,
+          outboundLegId: it.flight.id,
+          outboundDeparture: it.flight.departureDateTime,
         };
       g.count += 1;
       g.legIds.push(it.flight.id);
-      g.points += it.flight.originalCost.points ?? 0;
-      g.cashUsd += it.flight.originalCost.cashUsd ?? 0;
-      g.valueUsd += it.comparison?.originalValueUsd ?? 0;
-      if (it.flight.originalMarketCashUsd != null) {
-        g.marketCashUsd += it.flight.originalMarketCashUsd;
-        g.marketCashCount += 1;
+      if (it.flight.departureDateTime < g.outboundDeparture) {
+        g.outboundDeparture = it.flight.departureDateTime;
+        g.outboundLegId = it.flight.id;
       }
-      if (it.comparison?.currentAmount != null) {
-        g.currentAmount += it.comparison.currentAmount;
-        g.savingsNative += it.comparison.savingsNative ?? 0;
-        g.quoted += 1;
-      }
-      if (it.comparison?.recommendation === Recommendation.Rebook) g.rebook = true;
       m.set(pnr, g);
     }
-    // Decide a round-trip recommendation from the COMBINED savings vs the alert
-    // threshold (per-leg flags mislead: one leg can clear or miss the bar while
-    // the booking total tells a different story). Only once every leg is priced.
-    for (const g of m.values()) {
-      if (g.count < 2 || g.quoted < g.count) continue;
-      const isPointsBooking = g.points > 0;
-      const threshold = isPointsBooking
-        ? settings?.savingsAlertThresholdPoints ?? 2000
-        : settings?.savingsAlertThresholdUsd ?? 25;
-      g.rebook = g.savingsNative >= threshold && g.savingsNative > 0;
-    }
     return m;
-  }, [filtered, settings]);
+  }, [filtered]);
 
   const stats = useMemo(() => {
     const rebook = filtered.filter((f) => f.comparison?.recommendation === Recommendation.Rebook);
@@ -440,14 +399,42 @@ export function Dashboard(): JSX.Element {
               <thead className="sticky top-0 z-10 bg-slate-950 text-left text-xs uppercase tracking-wide text-slate-500 shadow-sm shadow-slate-950">
                 <tr>
                 <th className="w-8 px-2 py-3"></th>
-                <th className="px-4 py-3">Passenger</th>
-                <th className="px-4 py-3">Route</th>
-                <th className="px-4 py-3">Departure</th>
-                <th className="px-4 py-3 text-right">Original</th>
-                <th className="px-4 py-3 text-right">Current</th>
-                <th className="px-4 py-3 text-right">Savings</th>
-                <th className="px-4 py-3 text-right">Trend</th>
-                <th className="px-4 py-3">Recommendation</th>
+                <th className="px-4 py-3" title="The traveler on this booking, with the confirmation number below.">
+                  Passenger
+                </th>
+                <th className="px-4 py-3" title="Origin → destination airports for this flight, and the airline.">
+                  Route
+                </th>
+                <th className="px-4 py-3" title="Scheduled departure date and time, with arrival and travel time when known.">
+                  Departure
+                </th>
+                <th
+                  className="px-4 py-3 text-right"
+                  title="What you originally paid for this flight (points or cash). Round trips show each leg's own amount."
+                >
+                  Original
+                </th>
+                <th
+                  className="px-4 py-3 text-right"
+                  title="The latest price found for this flight. For points bookings this is estimated from the current cash fare."
+                >
+                  Current
+                </th>
+                <th
+                  className="px-4 py-3 text-right"
+                  title="Current price vs. what you PAID. Green means it's now cheaper than you booked it; red (+) means it's more expensive."
+                >
+                  Savings
+                </th>
+                <th
+                  className="px-4 py-3 text-right"
+                  title="How the live price moved since the previous price check that saw a change — i.e. which way it's trending now, not vs. what you paid."
+                >
+                  Since Last Check
+                </th>
+                <th className="px-4 py-3" title="Rebook if the current price is enough below what you paid to be worth it; otherwise Keep.">
+                  Recommendation
+                </th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -477,7 +464,6 @@ export function Dashboard(): JSX.Element {
                   ? bookingGroups.get(item.flight.confirmationNumber)
                   : undefined;
                 const isRoundTrip = (group?.count ?? 0) >= 2;
-                const isFirstLeg = !group || group.firstLegId === item.flight.id;
                 return (
                   <Fragment key={item.flight.id}>
                     <tr
@@ -539,121 +525,63 @@ export function Dashboard(): JSX.Element {
                         })()}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-300">
-                        {isRoundTrip ? (
-                          isFirstLeg ? (
-                            <>
-                              {formatNative(isPoints ? group!.points : group!.cashUsd, type)}
-                              <span className="mt-0.5 block text-[11px] text-slate-500">
-                                round trip · {group!.count} legs
-                              </span>
-                              {isPoints &&
-                              group!.marketCashCount > 0 &&
-                              group!.marketCashCount === group!.count ? (
-                                <span className="block text-[11px] text-slate-500">
-                                  {formatUsd(group!.marketCashUsd)}{' '}
-                                  <span className="text-emerald-500">actual</span>
-                                </span>
-                              ) : (
-                                isPoints &&
-                                group!.valueUsd > 0 && (
-                                  <span className="block text-[11px] text-slate-500">
-                                    ≈ {formatUsd(group!.valueUsd)} est.
-                                  </span>
-                                )
-                              )}
-                            </>
-                          ) : (
-                            <span className="text-[11px] text-slate-500">↳ incl. in round trip</span>
-                          )
+                        {formatNative(
+                          isPoints ? item.flight.originalCost.points : item.flight.originalCost.cashUsd,
+                          type,
+                        )}
+                        {isRoundTrip && (
+                          <span className="mt-0.5 block text-[11px] text-slate-500">
+                            round trip · {item.flight.id === group!.outboundLegId ? 'outbound' : 'return'}
+                          </span>
+                        )}
+                        {isPoints && item.flight.originalMarketCashUsd != null ? (
+                          <span className="mt-0.5 block text-[11px] text-slate-500">
+                            {formatUsd(item.flight.originalMarketCashUsd)}{' '}
+                            <span className="text-emerald-500">actual</span>
+                          </span>
                         ) : (
-                          <>
-                            {formatNative(
-                              isPoints ? item.flight.originalCost.points : item.flight.originalCost.cashUsd,
-                              type,
-                            )}
-                            {isPoints && item.flight.originalMarketCashUsd != null ? (
-                              <span className="mt-0.5 block text-[11px] text-slate-500">
-                                {formatUsd(item.flight.originalMarketCashUsd)}{' '}
-                                <span className="text-emerald-500">actual</span>
-                              </span>
-                            ) : (
-                              isPoints &&
-                              c?.originalValueUsd != null && (
-                                <span className="mt-0.5 block text-[11px] text-slate-500">
-                                  ≈ {formatUsd(c.originalValueUsd)} est.
-                                </span>
-                              )
-                            )}
-                          </>
+                          isPoints &&
+                          c?.originalValueUsd != null && (
+                            <span className="mt-0.5 block text-[11px] text-slate-500">
+                              ≈ {formatUsd(c.originalValueUsd)} est.
+                            </span>
+                          )
                         )}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-300">
-                        {isRoundTrip ? (
-                          <>
-                            {currentAmount != null ? (
-                              <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
-                                {formatNative(currentAmount, type)}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                            {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
-                              <span className="ml-1 text-[10px] text-slate-500">est.</span>
-                            )}
-                            {isPoints && item.quote?.cashUsd != null && (
-                              <span className="mt-0.5 block text-[11px] text-slate-500">
-                                {formatUsd(item.quote.cashUsd)} cash
-                              </span>
-                            )}
-                            {group!.quoted === group!.count ? (
-                              <span
-                                className={`block text-[11px] ${group!.savingsNative < 0 ? 'text-rose-400' : 'text-slate-500'}`}
-                              >
-                                total {formatNative(group!.currentAmount, type)} · both legs
-                              </span>
-                            ) : (
-                              <span className="block text-[11px] text-slate-500">
-                                {group!.quoted}/{group!.count} legs priced
-                              </span>
-                            )}
-                          </>
+                        {currentAmount != null ? (
+                          <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
+                            {formatNative(currentAmount, type)}
+                          </span>
                         ) : (
-                          <>
-                            {currentAmount != null ? (
-                              <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
-                                {formatNative(currentAmount, type)}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                            {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
-                              <span className="ml-1 text-[10px] text-slate-500">est.</span>
-                            )}
-                            {isPoints && item.quote?.cashUsd != null && (
-                              <span className="mt-0.5 block text-[11px] text-slate-500">
-                                {formatUsd(item.quote.cashUsd)} cash
-                              </span>
-                            )}
-                            {canExpand && (
-                              <div className="mt-1">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleExpanded(item.flight.id);
-                                  }}
-                                  className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/25"
-                                  aria-expanded={isOpen}
-                                  title={`Show ${cheaper.length} cheaper same-day option${cheaper.length > 1 ? 's' : ''}`}
-                                >
-                                  <ChevronRight
-                                    size={11}
-                                    className={`transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                                  />
-                                  {cheaper.length} cheaper
-                                </button>
-                              </div>
-                            )}
-                          </>
+                          '—'
+                        )}
+                        {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
+                          <span className="ml-1 text-[10px] text-slate-500">est.</span>
+                        )}
+                        {isPoints && item.quote?.cashUsd != null && (
+                          <span className="mt-0.5 block text-[11px] text-slate-500">
+                            {formatUsd(item.quote.cashUsd)} cash
+                          </span>
+                        )}
+                        {canExpand && (
+                          <div className="mt-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleExpanded(item.flight.id);
+                              }}
+                              className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/25"
+                              aria-expanded={isOpen}
+                              title={`Show ${cheaper.length} cheaper same-day option${cheaper.length > 1 ? 's' : ''}`}
+                            >
+                              <ChevronRight
+                                size={11}
+                                className={`transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                              />
+                              {cheaper.length} cheaper
+                            </button>
+                          </div>
                         )}
                       </td>
                       <td
@@ -665,33 +593,7 @@ export function Dashboard(): JSX.Element {
                               : 'text-slate-400'
                         }`}
                       >
-                        {isRoundTrip ? (
-                          isFirstLeg ? (
-                            group!.quoted === group!.count ? (
-                              <span
-                                className={`inline-flex items-center gap-1 ${
-                                  group!.savingsNative > 0
-                                    ? 'text-emerald-400'
-                                    : group!.savingsNative < 0
-                                      ? 'text-rose-400'
-                                      : 'text-slate-400'
-                                }`}
-                              >
-                                {group!.savingsNative > 0 && <TrendingDown size={13} />}
-                                {group!.savingsNative < 0 && <TrendingUp size={13} />}
-                                {group!.savingsNative < 0
-                                  ? `+${formatNative(-group!.savingsNative, type)}`
-                                  : formatNative(group!.savingsNative, type)}
-                              </span>
-                            ) : (
-                              <span className="text-[11px] text-slate-500">
-                                {group!.quoted}/{group!.count} legs priced
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-[11px] text-slate-500">↳ incl. in round trip</span>
-                          )
-                        ) : c?.savingsNative != null ? (
+                        {c?.savingsNative != null ? (
                           <span className="inline-flex items-center gap-1">
                             {savingsPositive && <TrendingDown size={13} />}
                             {savingsNegative && <TrendingUp size={13} />}
@@ -738,46 +640,26 @@ export function Dashboard(): JSX.Element {
                         })()}
                       </td>
                       <td className="px-4 py-3">
-                        {isRoundTrip ? (
-                          isFirstLeg ? (
-                            group!.quoted === group!.count ? (
-                              <RecommendationBadge
-                                value={group!.rebook ? Recommendation.Rebook : Recommendation.Keep}
-                              />
-                            ) : (
-                              <span className="text-[11px] text-slate-500">
-                                {group!.quoted}/{group!.count} legs priced
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-[11px] text-slate-500">↳ round trip</span>
-                          )
-                        ) : (
-                          <RecommendationBadge value={c?.recommendation ?? Recommendation.Unknown} />
-                        )}
+                        <RecommendationBadge value={c?.recommendation ?? Recommendation.Unknown} />
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {isRoundTrip && !isFirstLeg ? (
-                          <span className="text-[11px] text-slate-600">↳ synced</span>
-                        ) : (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (isRoundTrip && group) {
-                                void handleCheckGroup(group.legIds);
-                              } else {
-                                void handleCheckOne(item.flight.id);
-                              }
-                            }}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
-                            title={isRoundTrip ? 'Check both legs' : 'Check current price'}
-                          >
-                            <RefreshCw
-                              size={15}
-                              className={checkingId === item.flight.id ? 'animate-spin' : ''}
-                            />
-                          </button>
-                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isRoundTrip && group) {
+                              void handleCheckGroup(group.legIds);
+                            } else {
+                              void handleCheckOne(item.flight.id);
+                            }
+                          }}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                          title={isRoundTrip ? 'Check both legs' : 'Check current price'}
+                        >
+                          <RefreshCw
+                            size={15}
+                            className={checkingId === item.flight.id ? 'animate-spin' : ''}
+                          />
+                        </button>
                       </td>
                     </tr>
                     {isOpen && canExpand && (
