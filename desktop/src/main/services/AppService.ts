@@ -480,6 +480,9 @@ export class AppService {
     // confirmation number (same passenger/route/date, lower price) can be
     // credited as a saving against the cancelled fare.
     const cancelledLegs = folded.cancelledTrips.flatMap((t) => expandTripLegs(t));
+    // Confirmation numbers cancelled in this import, used to match a new booking
+    // against an already-tracked flight that is being cancelled (see below).
+    const cancelledSet = new Set(folded.cancelledConfirmations.map((c) => c.toUpperCase()));
     // Cancelled flights whose price history has already been carried over to a
     // rebooked flight this import, so it is not migrated twice.
     const migratedRebookFlights = new Set<string>();
@@ -533,6 +536,22 @@ export class AppService {
             flight,
             migratedRebookFlights,
           );
+        }
+        // Fallback for the common case where the cancellation email carries no
+        // fare (so it never surfaces in cancelledLegs): match the new booking
+        // against an ALREADY-TRACKED flight that is being cancelled this import,
+        // using the fare and price history the app already has in the database.
+        // This credits the saving and preserves the old flight's trend even when
+        // the original booking email is outside the fetch window.
+        const cancelledFlight = this.findCancelledTrackedRebook(
+          existing,
+          cancelledSet,
+          flight,
+          legTrip,
+        );
+        if (cancelledFlight) {
+          await this.maybeRecordCancelRebookingFromFlight(flight, legTrip, cancelledFlight);
+          await this.migrateHistoryFromOldFlight(cancelledFlight, flight, migratedRebookFlights);
         }
         // For a brand-new booking, capture the real market fare so the
         // original cost shows an "actual" price instead of an estimate.
@@ -750,6 +769,69 @@ export class AppService {
   }
 
   /**
+   * Find an already-tracked flight (from a previous import) that this new
+   * booking replaces: it is being cancelled in this import, is the same
+   * passenger/route/date, was booked via email, and its stored original fare is
+   * higher than the new paid fare. Unlike {@link findCancelledRebookMatch}, the
+   * baseline comes from the database, so it works even when the cancellation
+   * email carries no fare and the original booking email is out of window.
+   */
+  private findCancelledTrackedRebook(
+    existing: Flight[],
+    cancelledSet: Set<string>,
+    newFlight: Flight,
+    trip: RetrievedTrip,
+  ): Flight | undefined {
+    const origin = (trip.origin ?? '').toUpperCase();
+    const destination = (trip.destination ?? '').toUpperCase();
+    const date = (trip.departureDateTime ?? '').slice(0, 10);
+    if (!origin || !destination || !date) return undefined;
+    const isPoints = newFlight.originalCost.purchaseType === PurchaseType.Points;
+    const newAmount = isPoints ? newFlight.originalCost.points : newFlight.originalCost.cashUsd;
+    if (newAmount == null) return undefined;
+
+    return existing.find((f) => {
+      if (f.id === newFlight.id) return false;
+      if (f.source !== FlightSource.Email) return false;
+      if (!cancelledSet.has(f.confirmationNumber.toUpperCase())) return false;
+      // A same-PNR change is handled elsewhere; here we want a DIFFERENT PNR.
+      if (f.confirmationNumber.toUpperCase() === newFlight.confirmationNumber.toUpperCase()) {
+        return false;
+      }
+      if (f.passengerId !== newFlight.passengerId) return false;
+      if (f.route.origin.code.toUpperCase() !== origin) return false;
+      if (f.route.destination.code.toUpperCase() !== destination) return false;
+      if (f.departureDateTime.slice(0, 10) !== date) return false;
+      const oldAmount = isPoints ? f.originalCost.points : f.originalCost.cashUsd;
+      return oldAmount != null && oldAmount > newAmount;
+    });
+  }
+
+  /**
+   * Record a saving when a new booking replaces an already-tracked flight that
+   * is being cancelled this import. The cancelled flight's stored original fare
+   * (from the database) is the baseline.
+   */
+  private async maybeRecordCancelRebookingFromFlight(
+    flight: Flight,
+    trip: RetrievedTrip,
+    oldFlight: Flight,
+  ): Promise<void> {
+    const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
+    await this.recordRebookingSaving({
+      flightId: flight.id,
+      passengerId: flight.passengerId,
+      confirmationNumber: trip.confirmationNumber || flight.confirmationNumber,
+      routeLabel: `${flight.route.origin.code} → ${flight.route.destination.code}`,
+      departureDate: (trip.departureDateTime || flight.departureDateTime).slice(0, 10),
+      purchaseType: flight.originalCost.purchaseType,
+      airline: flight.airline,
+      originalAmount: isPoints ? oldFlight.originalCost.points : oldFlight.originalCost.cashUsd,
+      newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
+    });
+  }
+
+  /**
    * Carry a cancelled flight's observed price history onto the flight it was
    * rebooked into (a new confirmation number), and append a marker at the
    * rebooking so the trend chart can note where the flight was rebooked. The
@@ -774,7 +856,22 @@ export class AppService {
         f.route.destination.code.toUpperCase() === destination &&
         f.departureDateTime.slice(0, 10) === date,
     );
-    if (!oldFlight || oldFlight.id === newFlight.id) return;
+    if (!oldFlight) return;
+    await this.migrateHistoryFromOldFlight(oldFlight, newFlight, migrated);
+  }
+
+  /**
+   * Re-point a cancelled flight's price history to the flight it was rebooked
+   * into and append a marker anchoring the new (lower) fare, so the trend chart
+   * keeps the full history across the rebooking. Shared by both the email-fold
+   * and database-backed cancel-and-rebook paths.
+   */
+  private async migrateHistoryFromOldFlight(
+    oldFlight: Flight,
+    newFlight: Flight,
+    migrated: Set<string>,
+  ): Promise<void> {
+    if (oldFlight.id === newFlight.id) return;
     if (migrated.has(oldFlight.id)) return;
     migrated.add(oldFlight.id);
 
