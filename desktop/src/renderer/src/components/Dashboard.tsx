@@ -127,14 +127,16 @@ export function Dashboard(): JSX.Element {
     });
   }, []);
 
-  const filtered = useMemo(
-    () =>
-      flights.filter((f) => {
-        if (passengerFilter !== 'all' && f.flight.passengerId !== passengerFilter) return false;
-        return true;
-      }),
-    [flights, passengerFilter],
-  );
+  const filtered = useMemo(() => {
+    const now = Date.now();
+    return flights.filter((f) => {
+      if (passengerFilter !== 'all' && f.flight.passengerId !== passengerFilter) return false;
+      // Flown flights move to the Past Flights blade.
+      const departed = Date.parse(f.flight.departureDateTime);
+      if (Number.isFinite(departed) && departed < now) return false;
+      return true;
+    });
+  }, [flights, passengerFilter]);
 
   // Round trips are stored as separate legs sharing a confirmation number. Group
   // them so the cost columns can show the booking's true combined totals (e.g.
