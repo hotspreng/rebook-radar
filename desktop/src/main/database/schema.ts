@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS flights (
   arrival_dt TEXT,
   duration_minutes INTEGER,
   fare_type TEXT NOT NULL,
+  cabin TEXT,
   purchase_type TEXT NOT NULL,
   cash_usd REAL,
   points INTEGER,
@@ -121,5 +122,6 @@ export const MIGRATIONS: { table: string; column: string; ddl: string }[] = [
   { table: 'flights', column: 'payments_json', ddl: 'ALTER TABLE flights ADD COLUMN payments_json TEXT' },
   { table: 'flights', column: 'original_market_cash_usd', ddl: 'ALTER TABLE flights ADD COLUMN original_market_cash_usd REAL' },
   { table: 'flights', column: 'airline', ddl: "ALTER TABLE flights ADD COLUMN airline TEXT NOT NULL DEFAULT 'southwest'" },
+  { table: 'flights', column: 'cabin', ddl: 'ALTER TABLE flights ADD COLUMN cabin TEXT' },
   { table: 'price_history', column: 'rebooking', ddl: 'ALTER TABLE price_history ADD COLUMN rebooking INTEGER' },
 ];

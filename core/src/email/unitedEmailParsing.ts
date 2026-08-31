@@ -1,4 +1,5 @@
-import { Airline, FareType, PurchaseType } from '../models/common.js';
+import { Airline, Cabin, FareType, PurchaseType } from '../models/common.js';
+import { normalizeCabin } from './cabin.js';
 import {
   RetrievedFlightSegment,
   RetrievedTrip,
@@ -406,6 +407,21 @@ function parseUnitedPricing(
   return {};
 }
 
+/**
+ * Read the seat cabin from a United receipt. The eTicket layout prints
+ * "Class: United Economy (N)"; a forwarded itinerary prints the cabin on its
+ * own line as "United Economy (YN)". Fall back from the explicit "Class:" label
+ * to a bare cabin phrase.
+ */
+function parseUnitedCabin(body: string): Cabin {
+  const cls = body.match(/Class:\s*([^\n(]+?)\s*\(/i);
+  if (cls) return normalizeCabin(cls[1]);
+  const m = body.match(
+    /\b(Basic Economy|United Polaris|Polaris|United Premium Plus|Premium Plus|United Business|United First|United Economy)\b/i,
+  );
+  return normalizeCabin(m?.[1]);
+}
+
 /** Build a {@link RetrievedTrip} from a United eTicket receipt body. */
 function parseUnitedTripDetails(body: string, confirmationNumber: string): RetrievedTrip | undefined {
   const segments = parseUnitedSegments(body);
@@ -429,6 +445,7 @@ function parseUnitedTripDetails(body: string, confirmationNumber: string): Retri
     durationMinutes: first.durationMinutes,
     segments: first.segments,
     fareType: FareType.Unknown,
+    cabin: parseUnitedCabin(body),
     purchaseType: pricing.purchaseType,
     paidCashUsd: pricing.paidCashUsd,
     paidPoints: pricing.paidPoints,

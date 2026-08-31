@@ -58,10 +58,13 @@ const SERPAPI_SECRET_ACCOUNTS = ['serpapi', 'serpapi-2', 'serpapi-3'] as const;
 
 /**
  * Whether an email-parsed passenger name refers to the same person as a stored
- * passenger. Matches on first + last token so middle names that Southwest
- * sometimes omits ("Emily Sprenger" vs "Emily Jean Sprenger") still match,
- * while a different first name on a shared surname ("Amy ... Sprenger") does
- * not. Falls back to exact full-name equality.
+ * passenger. Requires the surname (last token) to match, then treats the given
+ * names as compatible if either the first given name matches (so middle names
+ * that Southwest sometimes omits — "Emily Sprenger" vs "Emily Jean Sprenger" —
+ * still match) OR the given names collapse to the same string ignoring spacing
+ * ("Emilyjean Sprenger" vs "Emily Jean Sprenger"). A different first name on a
+ * shared surname ("Amy ... Sprenger") does not match. Falls back to exact
+ * full-name equality.
  */
 function passengerNameMatches(emailName: string, storedFullName: string): boolean {
   const a = emailName.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -69,7 +72,14 @@ function passengerNameMatches(emailName: string, storedFullName: string): boolea
   if (a.length === 0 || b.length === 0) return false;
   if (a.join(' ') === b.join(' ')) return true;
   if (a.length < 2 || b.length < 2) return false;
-  return a[0] === b[0] && a[a.length - 1] === b[b.length - 1];
+  // Surnames must match.
+  if (a[a.length - 1] !== b[b.length - 1]) return false;
+  const aGiven = a.slice(0, -1);
+  const bGiven = b.slice(0, -1);
+  // Dropped middle name: same first given name.
+  if (aGiven[0] === bGiven[0]) return true;
+  // Same given names with different spacing: "Emily Jean" vs "Emilyjean".
+  return aGiven.join('') === bGiven.join('');
 }
 
 /** Stable identity for a single flight leg: PNR + route + departure date. */
@@ -405,7 +415,6 @@ export class AppService {
     // capped result set. The fold dispatches each message to the right parser.
     let southwest: EmailMessage[];
     let united: EmailMessage[];
-    let delta: EmailMessage[];
     try {
       southwest = await this.fetchTransactional(
         source,
@@ -416,11 +425,6 @@ export class AppService {
         source,
         'from:(Receipts@united.com OR notifications@united.com) newer_than:13m',
         'from:united.com newer_than:13m',
-      );
-      delta = await this.fetchTransactional(
-        source,
-        'from:(DeltaAirLines@e.delta.com OR DeltaAirLines@t.delta.com OR confirmation@delta.com) newer_than:13m',
-        'from:delta.com newer_than:13m',
       );
     } catch (err) {
       if (err instanceof GmailAuthError) {
@@ -434,11 +438,10 @@ export class AppService {
       }
       throw err;
     }
-    const messages = [...southwest, ...united, ...delta];
+    const messages = [...southwest, ...united];
     log.info('Fetched transactional emails', {
       southwest: southwest.length,
       united: united.length,
-      delta: delta.length,
     });
 
     const folded = new EmailTripImportService().fold(messages, { now: new Date() });
@@ -480,12 +483,6 @@ export class AppService {
     // confirmation number (same passenger/route/date, lower price) can be
     // credited as a saving against the cancelled fare.
     const cancelledLegs = folded.cancelledTrips.flatMap((t) => expandTripLegs(t));
-    // Confirmation numbers cancelled in this import, used to match a new booking
-    // against an already-tracked flight that is being cancelled (see below).
-    const cancelledSet = new Set(folded.cancelledConfirmations.map((c) => c.toUpperCase()));
-    // Cancelled flights whose price history has already been carried over to a
-    // rebooked flight this import, so it is not migrated twice.
-    const migratedRebookFlights = new Set<string>();
 
     for (const trip of folded.active) {
       const passengerId = await this.resolvePassengerForImport(passengers, trip.passengerNames);
@@ -527,31 +524,6 @@ export class AppService {
         const cancelledMatch = this.findCancelledRebookMatch(cancelledLegs, legTrip);
         if (cancelledMatch) {
           await this.maybeRecordCancelRebooking(flight, legTrip, cancelledMatch);
-          // Carry the cancelled flight's observed price history onto the
-          // rebooked flight so its trend chart keeps the full history, marking
-          // where the rebooking happened.
-          await this.migrateHistoryForCancelRebook(
-            byConfirmation,
-            cancelledMatch,
-            flight,
-            migratedRebookFlights,
-          );
-        }
-        // Fallback for the common case where the cancellation email carries no
-        // fare (so it never surfaces in cancelledLegs): match the new booking
-        // against an ALREADY-TRACKED flight that is being cancelled this import,
-        // using the fare and price history the app already has in the database.
-        // This credits the saving and preserves the old flight's trend even when
-        // the original booking email is outside the fetch window.
-        const cancelledFlight = this.findCancelledTrackedRebook(
-          existing,
-          cancelledSet,
-          flight,
-          legTrip,
-        );
-        if (cancelledFlight) {
-          await this.maybeRecordCancelRebookingFromFlight(flight, legTrip, cancelledFlight);
-          await this.migrateHistoryFromOldFlight(cancelledFlight, flight, migratedRebookFlights);
         }
         // For a brand-new booking, capture the real market fare so the
         // original cost shows an "actual" price instead of an estimate.
@@ -692,6 +664,7 @@ export class AppService {
       durationMinutes: trip.durationMinutes ?? existing.durationMinutes,
       segments: segments ?? existing.segments,
       fareType: trip.fareType ?? existing.fareType,
+      cabin: trip.cabin ?? existing.cabin,
       originalCost: mergedOriginal,
       source: FlightSource.Email,
       updatedAt: new Date().toISOString(),
@@ -765,140 +738,6 @@ export class AppService {
       airline: flight.airline,
       originalAmount: isPoints ? cancelledMatch.paidPoints : cancelledMatch.paidCashUsd,
       newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
-    });
-  }
-
-  /**
-   * Find an already-tracked flight (from a previous import) that this new
-   * booking replaces: it is being cancelled in this import, is the same
-   * passenger/route/date, was booked via email, and its stored original fare is
-   * higher than the new paid fare. Unlike {@link findCancelledRebookMatch}, the
-   * baseline comes from the database, so it works even when the cancellation
-   * email carries no fare and the original booking email is out of window.
-   */
-  private findCancelledTrackedRebook(
-    existing: Flight[],
-    cancelledSet: Set<string>,
-    newFlight: Flight,
-    trip: RetrievedTrip,
-  ): Flight | undefined {
-    const origin = (trip.origin ?? '').toUpperCase();
-    const destination = (trip.destination ?? '').toUpperCase();
-    const date = (trip.departureDateTime ?? '').slice(0, 10);
-    if (!origin || !destination || !date) return undefined;
-    const isPoints = newFlight.originalCost.purchaseType === PurchaseType.Points;
-    const newAmount = isPoints ? newFlight.originalCost.points : newFlight.originalCost.cashUsd;
-    if (newAmount == null) return undefined;
-
-    return existing.find((f) => {
-      if (f.id === newFlight.id) return false;
-      if (f.source !== FlightSource.Email) return false;
-      if (!cancelledSet.has(f.confirmationNumber.toUpperCase())) return false;
-      // A same-PNR change is handled elsewhere; here we want a DIFFERENT PNR.
-      if (f.confirmationNumber.toUpperCase() === newFlight.confirmationNumber.toUpperCase()) {
-        return false;
-      }
-      if (f.passengerId !== newFlight.passengerId) return false;
-      if (f.route.origin.code.toUpperCase() !== origin) return false;
-      if (f.route.destination.code.toUpperCase() !== destination) return false;
-      if (f.departureDateTime.slice(0, 10) !== date) return false;
-      const oldAmount = isPoints ? f.originalCost.points : f.originalCost.cashUsd;
-      return oldAmount != null && oldAmount > newAmount;
-    });
-  }
-
-  /**
-   * Record a saving when a new booking replaces an already-tracked flight that
-   * is being cancelled this import. The cancelled flight's stored original fare
-   * (from the database) is the baseline.
-   */
-  private async maybeRecordCancelRebookingFromFlight(
-    flight: Flight,
-    trip: RetrievedTrip,
-    oldFlight: Flight,
-  ): Promise<void> {
-    const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
-    await this.recordRebookingSaving({
-      flightId: flight.id,
-      passengerId: flight.passengerId,
-      confirmationNumber: trip.confirmationNumber || flight.confirmationNumber,
-      routeLabel: `${flight.route.origin.code} → ${flight.route.destination.code}`,
-      departureDate: (trip.departureDateTime || flight.departureDateTime).slice(0, 10),
-      purchaseType: flight.originalCost.purchaseType,
-      airline: flight.airline,
-      originalAmount: isPoints ? oldFlight.originalCost.points : oldFlight.originalCost.cashUsd,
-      newAmount: isPoints ? trip.paidPoints : trip.paidCashUsd,
-    });
-  }
-
-  /**
-   * Carry a cancelled flight's observed price history onto the flight it was
-   * rebooked into (a new confirmation number), and append a marker at the
-   * rebooking so the trend chart can note where the flight was rebooked. The
-   * cancelled flight itself is removed later by the cancellation pass, but its
-   * price history has already been re-pointed to the rebooked flight so it
-   * survives that deletion.
-   */
-  private async migrateHistoryForCancelRebook(
-    byConfirmation: Map<string, Flight[]>,
-    cancelledMatch: RetrievedTrip,
-    newFlight: Flight,
-    migrated: Set<string>,
-  ): Promise<void> {
-    const pnr = (cancelledMatch.confirmationNumber || '').toUpperCase();
-    if (!pnr) return;
-    const origin = (cancelledMatch.origin ?? '').toUpperCase();
-    const destination = (cancelledMatch.destination ?? '').toUpperCase();
-    const date = (cancelledMatch.departureDateTime ?? '').slice(0, 10);
-    const oldFlight = (byConfirmation.get(pnr) ?? []).find(
-      (f) =>
-        f.route.origin.code.toUpperCase() === origin &&
-        f.route.destination.code.toUpperCase() === destination &&
-        f.departureDateTime.slice(0, 10) === date,
-    );
-    if (!oldFlight) return;
-    await this.migrateHistoryFromOldFlight(oldFlight, newFlight, migrated);
-  }
-
-  /**
-   * Re-point a cancelled flight's price history to the flight it was rebooked
-   * into and append a marker anchoring the new (lower) fare, so the trend chart
-   * keeps the full history across the rebooking. Shared by both the email-fold
-   * and database-backed cancel-and-rebook paths.
-   */
-  private async migrateHistoryFromOldFlight(
-    oldFlight: Flight,
-    newFlight: Flight,
-    migrated: Set<string>,
-  ): Promise<void> {
-    if (oldFlight.id === newFlight.id) return;
-    if (migrated.has(oldFlight.id)) return;
-    migrated.add(oldFlight.id);
-
-    await this.deps.priceHistory.reassignFlight(oldFlight.id, newFlight.id);
-
-    // Append a marker entry that both notes the rebooking and anchors the new
-    // (lower) fare so the chart line continues from the carried-over history.
-    const isPoints = newFlight.originalCost.purchaseType === PurchaseType.Points;
-    const amount = isPoints ? newFlight.originalCost.points : newFlight.originalCost.cashUsd;
-    if (amount != null && Number.isFinite(amount)) {
-      const pointValueCents = this.pointValueCentsFor(newFlight.airline);
-      const valueUsd = isPoints ? (amount * pointValueCents) / 100 : amount;
-      await this.deps.priceHistory.append({
-        flightId: newFlight.id,
-        recordedAt: new Date().toISOString(),
-        purchaseType: newFlight.originalCost.purchaseType,
-        amount,
-        cashUsd: isPoints ? newFlight.originalMarketCashUsd : newFlight.originalCost.cashUsd,
-        points: isPoints ? newFlight.originalCost.points : undefined,
-        valueUsd,
-        rebooking: true,
-      });
-    }
-    log.info('Carried price history across cancel-and-rebook', {
-      from: oldFlight.id,
-      to: newFlight.id,
-      confirmation: newFlight.confirmationNumber,
     });
   }
 
@@ -1012,6 +851,7 @@ export class AppService {
       durationMinutes: trip.durationMinutes,
       segments: toFlightSegments(trip),
       fareType: trip.fareType,
+      cabin: trip.cabin,
       originalCost: {
         purchaseType: (trip.purchaseType ?? (isPoints ? 'points' : 'cash')) as Flight['originalCost']['purchaseType'],
         cashUsd: trip.originalPaidCashUsd ?? trip.paidCashUsd,
@@ -1071,62 +911,6 @@ export class AppService {
   async listFlights(): Promise<FlightWithComparison[]> {
     const flights = await this.deps.flights.list();
     return Promise.all(flights.map((f) => this.toFlightWithComparison(f)));
-  }
-
-  /**
-   * Flights whose departure is in the past, for the Past Flights blade. For
-   * each, computes what was originally paid the first time it was booked, the
-   * final amount paid after any rebookings, and the resulting saving. The
-   * original/final are derived from the frozen original cost plus any recorded
-   * rebooking events (which also cover cancel-and-rebook under a new PNR).
-   */
-  async getPastFlights(): Promise<PastFlightView[]> {
-    const now = Date.now();
-    const flights = await this.deps.flights.list();
-    const past = flights.filter((f) => {
-      const t = Date.parse(f.departureDateTime);
-      return Number.isFinite(t) && t < now;
-    });
-
-    const out: PastFlightView[] = [];
-    for (const flight of past) {
-      const passenger = await this.deps.passengers.get(flight.passengerId);
-      const events = await this.deps.rebookEvents.listByFlight(flight.id);
-      const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
-      const baseNative = (isPoints ? flight.originalCost.points : flight.originalCost.cashUsd) ?? 0;
-
-      // The highest price ever paid (first booking or a cancelled fare) and the
-      // lowest actually paid (after rebookings). Rebooking events carry both the
-      // baseline and the rebooked amount, so combining them with the stored
-      // original cost yields the true first/final regardless of which path
-      // (same-PNR change or cancel+rebook) produced the saving.
-      const originals = [baseNative, ...events.map((e) => e.originalAmount)].filter(
-        (n) => Number.isFinite(n) && n > 0,
-      );
-      const finals = [baseNative, ...events.map((e) => e.newAmount)].filter(
-        (n) => Number.isFinite(n) && n > 0,
-      );
-      const originalAmount = originals.length ? Math.max(...originals) : baseNative;
-      const finalAmount = finals.length ? Math.min(...finals) : baseNative;
-      const savedAmount = Math.max(0, originalAmount - finalAmount);
-      const pointValueCents = this.pointValueCentsFor(flight.airline);
-      const savedValueUsd = isPoints ? (savedAmount * pointValueCents) / 100 : savedAmount;
-
-      out.push({
-        flight,
-        passengerName: passenger?.fullName ?? 'Unknown',
-        purchaseType: flight.originalCost.purchaseType,
-        originalAmount,
-        finalAmount,
-        savedAmount,
-        savedValueUsd,
-        rebookings: events.length,
-      });
-    }
-
-    // Most recently flown first.
-    out.sort((a, b) => Date.parse(b.flight.departureDateTime) - Date.parse(a.flight.departureDateTime));
-    return out;
   }
 
   async getFlight(id: string): Promise<FlightWithComparison | undefined> {
@@ -1314,6 +1098,56 @@ export class AppService {
       comparison: f.comparison,
     }));
     return exportFlightsToCsv(rows);
+  }
+
+  /**
+   * Flights whose departure is in the past, for the Past Flights blade. Shows
+   * what was originally paid, the lowest amount paid after any rebookings, and
+   * the resulting saving (points valued via the airline's point value).
+   */
+  async getPastFlights(): Promise<PastFlightView[]> {
+    const now = Date.now();
+    const flights = await this.deps.flights.list();
+    const passengers = await this.deps.passengers.list();
+    const nameById = new Map(passengers.map((p) => [p.id, p.fullName]));
+
+    const out: PastFlightView[] = [];
+    for (const flight of flights) {
+      const departed = new Date(flight.departureDateTime).getTime();
+      if (Number.isNaN(departed) || departed >= now) continue;
+
+      const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
+      const originalAmount =
+        (isPoints ? flight.originalCost.points : flight.originalCost.cashUsd) ?? 0;
+
+      const events = await this.deps.rebookEvents.listByFlight(flight.id);
+      const finalAmount = events.length
+        ? Math.min(originalAmount, ...events.map((e) => e.newAmount))
+        : originalAmount;
+      const savedAmount = Math.max(0, originalAmount - finalAmount);
+      const savedValueUsd = isPoints
+        ? (savedAmount * this.pointValueCentsFor(flight.airline)) / 100
+        : savedAmount;
+
+      out.push({
+        flight,
+        passengerName: nameById.get(flight.passengerId) ?? 'Unknown',
+        purchaseType: flight.originalCost.purchaseType,
+        originalAmount,
+        finalAmount,
+        savedAmount,
+        savedValueUsd,
+        rebookings: events.length,
+      });
+    }
+
+    // Most recently departed first.
+    out.sort(
+      (a, b) =>
+        new Date(b.flight.departureDateTime).getTime() -
+        new Date(a.flight.departureDateTime).getTime(),
+    );
+    return out;
   }
 
   // --- Reporting -----------------------------------------------------------
@@ -1533,14 +1367,14 @@ export class AppService {
     };
   }
 
-  /** Build the airline provider. Google Flights via SerpApi is the sole fare source. */
+  /** Build the SerpApi Google Flights fare provider for the given airline. */
   private createProvider(airline: Airline = Airline.Southwest): AirlineProvider {
-    // Estimate points from a cash fare using the user's cents-per-point rate, so
-    // estimates track the airline's actual award pricing. Tunable in Settings.
+    // Estimate award points from a cash fare using the user's cents-per-point
+    // rate so estimates track the airline's actual award pricing.
     const estimation = { centsPerPoint: this.pointValueCentsFor(airline) / 100 };
     return new GoogleFlightsSerpApiProvider({
-      // Keep only itineraries flown by this flight's airline so a United
-      // price check never matches a cheaper Southwest fare and vice-versa.
+      // Keep only itineraries flown by this flight's airline so a United price
+      // check never matches a cheaper Southwest fare and vice-versa.
       airlineName: AIRLINE_LABELS[airline],
       fetchJson: async (url) => {
         // SerpApi runs the Google Flights search live, so allow generous time
@@ -1553,9 +1387,7 @@ export class AppService {
         const keys = await Promise.all(
           SERPAPI_SECRET_ACCOUNTS.map((account) => this.deps.secrets.getPassword(account)),
         );
-        return keys
-          .map((k) => k?.trim())
-          .filter((k): k is string => k != null && k.length > 0);
+        return keys.map((k) => k?.trim()).filter((k): k is string => k != null && k.length > 0);
       },
       estimation,
     });

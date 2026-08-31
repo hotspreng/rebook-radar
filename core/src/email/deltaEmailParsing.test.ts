@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Airline, PurchaseType } from '../models/common.js';
+import { Airline, Cabin, PurchaseType } from '../models/common.js';
 import {
   TripEventType,
   classifyDeltaEmail,
@@ -86,6 +86,7 @@ test('parseDeltaEmail parses a real Award Receipt (route, date, miles, passenger
   assert.equal(trip.purchaseType, PurchaseType.Points);
   assert.equal(trip.paidPoints, 27100);
   assert.equal(trip.taxesAndFeesUsd, 5.6);
+  assert.equal(trip.cabin, Cabin.Economy);
   assert.deepEqual(trip.passengerNames, ['Emily Jean Sprenger']);
 });
 

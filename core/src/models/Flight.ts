@@ -1,6 +1,7 @@
 import {
   Airline,
   BookingCost,
+  Cabin,
   FareType,
   FlightSource,
   IsoDate,
@@ -68,6 +69,13 @@ export interface Flight {
   segments?: FlightSegment[];
 
   fareType: FareType;
+
+  /**
+   * Cabin / class of service (Basic Economy, Main Cabin, Comfort+, etc.).
+   * Populated for carriers that expose it (Delta, United); undefined for
+   * Southwest, whose product is captured by {@link fareType} instead.
+   */
+  cabin?: Cabin;
 
   /** What was originally paid for this flight. */
   originalCost: BookingCost;

@@ -1,6 +1,7 @@
 import {
   PurchaseType,
   Recommendation,
+  type Cabin,
   type FareType,
 } from '@swr/core';
 
@@ -63,6 +64,15 @@ export const FARE_LABELS: Record<FareType, string> = {
   wanna_get_away_plus: 'Wanna Get Away+',
   anytime: 'Anytime',
   business_select: 'Business Select',
+  unknown: 'Unknown',
+};
+
+export const CABIN_LABELS: Record<Cabin, string> = {
+  basic_economy: 'Basic Economy',
+  economy: 'Economy',
+  premium_economy: 'Premium Economy',
+  business: 'Business',
+  first: 'First',
   unknown: 'Unknown',
 };
 

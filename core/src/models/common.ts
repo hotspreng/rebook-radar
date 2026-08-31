@@ -21,6 +21,20 @@ export enum FareType {
   Unknown = 'unknown',
 }
 
+/**
+ * Airline-agnostic cabin / class of service. Unlike {@link FareType} (a
+ * Southwest fare product), this models the seat cabin used by carriers such as
+ * Delta and United (Basic Economy, Main Cabin, Comfort+, Polaris, etc.).
+ */
+export enum Cabin {
+  BasicEconomy = 'basic_economy',
+  Economy = 'economy',
+  PremiumEconomy = 'premium_economy',
+  Business = 'business',
+  First = 'first',
+  Unknown = 'unknown',
+}
+
 /** The system's recommendation after comparing prices. */
 export enum Recommendation {
   Rebook = 'rebook',

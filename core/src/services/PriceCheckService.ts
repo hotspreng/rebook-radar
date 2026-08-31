@@ -80,8 +80,11 @@ export class PriceCheckService {
   }
 
   /**
-   * Pick the fare option closest to the original departure time (within the
-   * tolerance window), breaking ties by the cheapest relevant price.
+   * Pick the fare option that best matches the booked flight: within the
+   * departure-time tolerance window, prefer the option with the same stop
+   * profile as the booking (so a nonstop booking is priced against a nonstop,
+   * not a cheaper connection that happens to leave at the same time), then the
+   * closest departure time, then the cheapest relevant price.
    */
   private selectBestMatch(
     flight: Flight,
@@ -91,6 +94,15 @@ export class PriceCheckService {
     if (results.length === 0) return undefined;
     const originalMs = Date.parse(flight.departureDateTime);
     const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
+
+    // Stops on the booked flight: a connecting direction stores its segments
+    // (≥2), otherwise it's a nonstop (0 stops).
+    const bookedStops =
+      flight.segments && flight.segments.length > 1 ? flight.segments.length - 1 : 0;
+    // 0 when a result has the same stop count as the booking, 1 otherwise. An
+    // unknown stop count is treated as matching (no penalty).
+    const stopRank = (r: FlightSearchResult): number =>
+      (r.stops ?? bookedStops) === bookedStops ? 0 : 1;
 
     const scored = results.map((r) => {
       const diffMin = Number.isNaN(originalMs)
@@ -102,17 +114,24 @@ export class PriceCheckService {
 
     const within = scored.filter((s) => Number.isNaN(originalMs) || s.diffMin <= toleranceMinutes);
 
-    // Inside the tolerance window: closest departure first, cheapest as tiebreak.
+    // Inside the tolerance window: same stop profile first, then closest
+    // departure, then cheapest.
     if (within.length > 0) {
-      within.sort((a, b) => a.diffMin - b.diffMin || a.price - b.price);
+      within.sort(
+        (a, b) =>
+          stopRank(a.r) - stopRank(b.r) || a.diffMin - b.diffMin || a.price - b.price,
+      );
       return within[0]!.r;
     }
 
     // No option near the booked time of day. Fall back to the CLOSEST departure
     // by time rather than an arbitrary first result, so the "current price"
     // tracks the booked flight's time of day instead of, say, a cheap red-eye
-    // many hours away (which produced false "rebook" signals).
-    scored.sort((a, b) => a.diffMin - b.diffMin || a.price - b.price);
+    // many hours away (which produced false "rebook" signals). Same stop profile
+    // breaks ties.
+    scored.sort(
+      (a, b) => a.diffMin - b.diffMin || stopRank(a.r) - stopRank(b.r) || a.price - b.price,
+    );
     return scored[0]!.r;
   }
 

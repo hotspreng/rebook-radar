@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Airline, PurchaseType } from '../models/common.js';
+import { Airline, Cabin, PurchaseType } from '../models/common.js';
 import {
   TripEventType,
   classifyUnitedEmail,
@@ -102,6 +102,7 @@ test('parseUnitedEmail parses a cash round-trip receipt into two legs', () => {
   assert.equal(trip.purchaseType, PurchaseType.Cash);
   assert.equal(trip.paidCashUsd, 318.6);
   assert.equal(trip.taxesAndFeesUsd, 60);
+  assert.equal(trip.cabin, Cabin.Economy);
   // The 23h ground stop in Syracuse splits the trip into two legs; the
   // IAD connection stays within the second leg.
   assert.equal(trip.legs?.length, 2);

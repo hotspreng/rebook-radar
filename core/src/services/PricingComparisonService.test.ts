@@ -132,6 +132,33 @@ test('points fare with captured actual cash scales current points down when the 
   assert.ok(result.savingsNative != null && result.savingsNative > 0);
 });
 
+test('points fare values the booking at the price paid, not the settings cpp', () => {
+  // Booked 8,500 pts when the real cash fare was $161 (≈ 1.89¢/pt), well above
+  // the 1.4¢ settings default. A fresh check right after booking returns the
+  // same fare, so there is no real opportunity to rebook.
+  const flight = makeFlight({
+    originalCost: { purchaseType: PurchaseType.Points, points: 8500, taxesAndFeesUsd: 5.6 },
+    originalMarketCashUsd: 161,
+  });
+  const quote = makeQuote({ cashUsd: 161, points: 8500, pointsTaxesAndFeesUsd: 5.6 });
+  const result = service.compare(flight, quote, {
+    pointValueCents: 1.4,
+    savingsThresholdUsd: 25,
+    savingsThresholdPoints: 2000,
+    now: fixedNow,
+  });
+
+  // Original valued at what was actually paid ($161 + $5.60 taxes), NOT
+  // 8,500 × 1.4¢ = $119 + taxes.
+  assert.equal(result.originalValueUsd, 166.6);
+  // The reported point value reflects the booking rate, not the 1.4¢ setting.
+  assert.equal(result.pointValueCents, 1.89);
+  // Same fare ⇒ no meaningful savings ⇒ Keep (no spurious rebook after booking).
+  assert.equal(result.currentAmount, 8500);
+  assert.equal(result.savingsNative, 0);
+  assert.equal(result.recommendation, Recommendation.Keep);
+});
+
 test('missing quote yields Unknown recommendation', () => {
   const flight = makeFlight();
   const result = service.compare(flight, undefined, {

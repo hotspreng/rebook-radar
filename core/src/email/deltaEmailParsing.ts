@@ -1,4 +1,5 @@
-import { Airline, FareType, PurchaseType } from '../models/common.js';
+import { Airline, Cabin, FareType, PurchaseType } from '../models/common.js';
+import { normalizeCabin } from './cabin.js';
 import {
   RetrievedFlightSegment,
   RetrievedTrip,
@@ -269,6 +270,19 @@ function parseDeltaTravelers(body: string): string[] {
 }
 
 /**
+ * Read the seat cabin from a Delta itinerary. Cabin lines are printed as a
+ * label followed by the fare-class letter, e.g. "Delta Main (N)",
+ * "Delta Comfort+ (C)", "First Class (F)" or "Basic Economy (E)". The trailing
+ * "(X)" anchor keeps this from matching unrelated prose.
+ */
+function parseDeltaCabin(body: string): Cabin {
+  const m = body.match(
+    /\b(Basic Economy|Delta One|Delta Premium Select|Premium Select|Delta Comfort\+?|Comfort\+?|First Class|First|Delta Main|Main Cabin|Main)\s*\([A-Z0-9]\)/i,
+  );
+  return normalizeCabin(m?.[1]);
+}
+
+/**
  * Parse the fare. Delta Award Receipts read "Miles Redeemed 27,100 Miles" plus a
  * cash "Total Charged - &#36;5.60 USD" (taxes/fees on an award). A pure-cash Delta
  * receipt (no miles) is treated as a cash booking on the total. Reservation-wide
@@ -352,6 +366,7 @@ function parseDeltaTripDetails(body: string, confirmationNumber: string): Retrie
     arrivalDateTime,
     segments: segments && segments.length > 1 ? segments : undefined,
     fareType: FareType.Unknown,
+    cabin: parseDeltaCabin(body),
     purchaseType: pricing.purchaseType,
     paidCashUsd: pricing.paidCashUsd,
     paidPoints: pricing.paidPoints,

@@ -52,9 +52,22 @@ export class PricingComparisonService {
     const original = flight.originalCost;
     const isPoints = original.purchaseType === PurchaseType.Points;
 
-    const originalAmount = isPoints ? original.points ?? 0 : original.cashUsd ?? 0;
+    // When a points flight's cash price was also known at booking (captured as
+    // originalMarketCashUsd), that booking reveals THIS flight's real points
+    // value: price ÷ points. Anchor every dollar figure on that flight-specific
+    // rate instead of the generic settings cents-per-point, which would
+    // otherwise under- or over-value a just-booked award ticket.
+    const originalPoints = original.points ?? 0;
+    const actualCash = flight.originalMarketCashUsd;
+    const bookingCpp =
+      isPoints && actualCash != null && actualCash > 0 && originalPoints > 0
+        ? (actualCash * 100) / originalPoints
+        : undefined;
+    const effectiveCpp = bookingCpp ?? pointValueCents;
+
+    const originalAmount = isPoints ? originalPoints : original.cashUsd ?? 0;
     const originalValueUsd = isPoints
-      ? pointsToUsd(original.points ?? 0, pointValueCents) + original.taxesAndFeesUsd
+      ? pointsToUsd(originalPoints, effectiveCpp) + original.taxesAndFeesUsd
       : (original.cashUsd ?? 0) + 0; // cash fare already includes taxes
 
     // No quote → we cannot recommend anything yet.
@@ -67,19 +80,20 @@ export class PricingComparisonService {
         originalAmount,
         savingsUsd: 0,
         percentDifference: 0,
-        pointValueCents,
+        pointValueCents: round2(effectiveCpp),
         recommendation: Recommendation.Unknown,
         rationale: 'No current price available yet. Run a price check to compare.',
         computedAt,
       };
     }
 
-    // Resolve the current amount in the SAME unit as the original purchase.
+    // Resolve the current amount in the SAME unit as the original purchase,
+    // valued at the same flight-specific rate as the original.
     const { currentAmount, currentValueUsd } = this.resolveCurrent(
       flight,
       isPoints,
       quote,
-      pointValueCents,
+      effectiveCpp,
     );
 
     const savingsNative = round(originalAmount - currentAmount, isPoints ? 0 : 2);
@@ -101,7 +115,7 @@ export class PricingComparisonService {
       savingsUsd,
       savingsNative,
       percentDifference,
-      pointValueCents,
+      pointValueCents: round2(effectiveCpp),
       recommendation,
       rationale: this.buildRationale({
         isPoints,

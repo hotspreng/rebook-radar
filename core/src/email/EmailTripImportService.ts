@@ -171,6 +171,7 @@ function mergeTrip(prev: RetrievedTrip | undefined, next: RetrievedTrip | undefi
     arrivalDateTime: next.arrivalDateTime ?? prev.arrivalDateTime,
     durationMinutes: next.durationMinutes ?? prev.durationMinutes,
     fareType: next.fareType || prev.fareType,
+    cabin: next.cabin ?? prev.cabin,
     purchaseType: next.purchaseType ?? prev.purchaseType,
     paidCashUsd: next.paidCashUsd ?? prev.paidCashUsd,
     paidPoints: next.paidPoints ?? prev.paidPoints,

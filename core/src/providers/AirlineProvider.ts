@@ -1,5 +1,5 @@
 import { AccountCredentials } from '../models/Account.js';
-import { Airline, FareType, IsoDate, PaymentMethod, PurchaseType } from '../models/common.js';
+import { Airline, Cabin, FareType, IsoDate, PaymentMethod, PurchaseType } from '../models/common.js';
 
 /** One operated segment within a retrieved direction (between connections). */
 export interface RetrievedFlightSegment {
@@ -26,6 +26,8 @@ export interface RetrievedTrip {
   /** Total travel time in minutes for this leg, when known. */
   durationMinutes?: number;
   fareType: FareType;
+  /** Cabin / class of service, when the airline exposes it (Delta, United). */
+  cabin?: Cabin;
   /** What was paid, when the site exposes it. */
   purchaseType?: PurchaseType;
   paidCashUsd?: number;
