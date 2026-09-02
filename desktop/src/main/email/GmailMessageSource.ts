@@ -9,6 +9,9 @@ import type { Credentials, OAuth2Client } from 'google-auth-library';
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+const GMAIL_BODY_FETCH_BATCH_SIZE = 5;
+const GMAIL_BODY_FETCH_BATCH_DELAY_MS = 1_000;
+const GMAIL_QUOTA_RETRY_DELAYS_MS = [15_000, 30_000, 60_000];
 
 /**
  * Thrown when Gmail rejects the stored refresh token (OAuth `invalid_grant`).
@@ -35,6 +38,45 @@ export function isInvalidGrantError(err: unknown): boolean {
   const responseError = anyErr.response?.data?.error;
   if (typeof responseError === 'string' && responseError === 'invalid_grant') return true;
   return typeof anyErr.message === 'string' && anyErr.message.includes('invalid_grant');
+}
+
+/** Detects Gmail per-user query-cost / rate-limit responses. */
+export function isGmailQuotaError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const anyErr = err as {
+    code?: unknown;
+    message?: unknown;
+    response?: {
+      status?: unknown;
+      data?: {
+        error?: unknown;
+        error_description?: unknown;
+        errorDetails?: { reason?: unknown }[];
+        errors?: { reason?: unknown; message?: unknown }[];
+        message?: unknown;
+      };
+    };
+  };
+  const status = anyErr.response?.status ?? anyErr.code;
+  const responseData = anyErr.response?.data;
+  const reasons = [
+    responseData?.error,
+    responseData?.error_description,
+    responseData?.message,
+    anyErr.message,
+    ...(responseData?.errors ?? []).flatMap((e) => [e.reason, e.message]),
+    ...(responseData?.errorDetails ?? []).map((e) => e.reason),
+  ]
+    .filter((v): v is string => typeof v === 'string')
+    .map((v) => v.toLowerCase());
+  const hasQuotaReason = reasons.some(
+    (reason) =>
+      reason.includes('quota') ||
+      reason.includes('ratelimit') ||
+      reason.includes('rate limit') ||
+      reason.includes('user-rate-limit-exceeded'),
+  );
+  return (status === 403 || status === 429 || status === undefined) && hasQuotaReason;
 }
 
 
@@ -240,30 +282,50 @@ export class GmailMessageSource implements EmailMessageSource {
     this.log.info('Listed Gmail messages', { matched: ids.length, fetching: capped.length });
     this.options.onProgress?.(0, capped.length);
 
-    // Fetch message bodies in parallel batches (Gmail per-user rate limits are
-    // generous; sequential GETs made a 400-email import take minutes).
-    const BATCH = 20;
     const messages: EmailMessage[] = [];
-    for (let i = 0; i < capped.length; i += BATCH) {
-      const batch = capped.slice(i, i + BATCH);
+    for (let i = 0; i < capped.length; i += GMAIL_BODY_FETCH_BATCH_SIZE) {
+      const batch = capped.slice(i, i + GMAIL_BODY_FETCH_BATCH_SIZE);
       const fetched = await Promise.all(
-        batch.map(async (id) => {
-          const { data } = await client.request<GmailGetResponse>({
-            url: `${GMAIL_API}/messages/${id}`,
-            params: { format: 'full' },
-          });
-          return this.toEmailMessage(data);
-        }),
+        batch.map(async (id) => this.fetchMessageBodyWithRetry(client, id)),
       );
       messages.push(...fetched);
       this.log.info('Fetching Gmail bodies', { done: messages.length, total: capped.length });
       this.options.onProgress?.(messages.length, capped.length);
+      if (i + GMAIL_BODY_FETCH_BATCH_SIZE < capped.length) {
+        await delay(GMAIL_BODY_FETCH_BATCH_DELAY_MS);
+      }
     }
     this.log.info('Fetched Gmail messages', { count: messages.length });
     return messages;
   }
 
   // --- internals -----------------------------------------------------------
+
+  private async fetchMessageBodyWithRetry(
+    client: OAuth2Client,
+    id: string,
+  ): Promise<EmailMessage> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const { data } = await client.request<GmailGetResponse>({
+          url: `${GMAIL_API}/messages/${id}`,
+          params: { format: 'full' },
+        });
+        return this.toEmailMessage(data);
+      } catch (err) {
+        if (!isGmailQuotaError(err) || attempt >= GMAIL_QUOTA_RETRY_DELAYS_MS.length) {
+          throw err;
+        }
+        const retryMs = GMAIL_QUOTA_RETRY_DELAYS_MS[attempt] ?? 60_000;
+        this.log.warn('Gmail quota/rate limit reached while fetching body; retrying', {
+          id,
+          retryMs,
+          attempt: attempt + 1,
+        });
+        await delay(retryMs);
+      }
+    }
+  }
 
   private toEmailMessage(data: GmailGetResponse): EmailMessage {
     const headers = data.payload?.headers ?? [];
@@ -310,6 +372,10 @@ export class GmailMessageSource implements EmailMessageSource {
       );
     }
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function respondHtml(res: ServerResponse, message: string): void {
