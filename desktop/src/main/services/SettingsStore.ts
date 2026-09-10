@@ -13,6 +13,10 @@ const DEFAULT_UNITED_POINT_VALUE_CENTS = 1.35;
  *  default Delta rate when no prior per-airline value exists. */
 const DEFAULT_DELTA_POINT_VALUE_CENTS = 1.2;
 
+/** The Points Guy's published valuation for American AAdvantage miles (~1.5¢),
+ *  used as the default American rate when no prior per-airline value exists. */
+const DEFAULT_AMERICAN_POINT_VALUE_CENTS = 1.5;
+
 /** Persists user-editable settings as a single JSON row. */
 export class SettingsStore {
   constructor(private readonly defaults: AppConfig) {}
@@ -24,6 +28,7 @@ export class SettingsStore {
         [Airline.Southwest]: this.defaults.defaultPointValueCents,
         [Airline.United]: DEFAULT_UNITED_POINT_VALUE_CENTS,
         [Airline.Delta]: DEFAULT_DELTA_POINT_VALUE_CENTS,
+        [Airline.American]: DEFAULT_AMERICAN_POINT_VALUE_CENTS,
       },
       pollIntervalMinutes: this.defaults.pollIntervalMinutes,
       savingsAlertThresholdUsd: this.defaults.savingsAlertThresholdUsd,
@@ -58,6 +63,7 @@ export class SettingsStore {
         [Airline.Southwest]: parsed.pointValueCents ?? this.defaults.defaultPointValueCents,
         [Airline.United]: DEFAULT_UNITED_POINT_VALUE_CENTS,
         [Airline.Delta]: DEFAULT_DELTA_POINT_VALUE_CENTS,
+        [Airline.American]: DEFAULT_AMERICAN_POINT_VALUE_CENTS,
       };
     } else {
       // Backfill any airline added after this settings row was first written

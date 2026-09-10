@@ -136,6 +136,15 @@ export function SettingsPage(): JSX.Element {
                 onCommit={(v) => setAirlineRate(Airline.Delta, v)}
               />
             </Field>
+            <Field
+              label="American — cents per mile"
+              hint="The Points Guy values American AAdvantage miles at about 1.5¢ each."
+            >
+              <AwardRateInput
+                value={draft.pointValueCentsByAirline[Airline.American]}
+                onCommit={(v) => setAirlineRate(Airline.American, v)}
+              />
+            </Field>
           </div>
           <p className="mt-3 text-xs text-slate-500">
             Used to estimate award points from a cash fare and to value points savings in
