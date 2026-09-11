@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { AIRLINE_LABELS, PurchaseType, Recommendation } from '@swr/core';
+import { AIRLINE_LABELS, Airline, PurchaseType, Recommendation } from '@swr/core';
 import type { EmailImportProgress, Flight, FlightWithComparison, PriceCheckProgress, SavingsReport } from '@shared/dto';
 import {
   ArrowRight,
@@ -16,7 +16,7 @@ import { Button, Card, RecommendationBadge } from './ui.js';
 import { FlightFormModal } from './FlightFormModal.js';
 import { FlightDetailDrawer } from './FlightDetailDrawer.js';
 import { AlternativesPanel, getCheaperAlternatives } from './AlternativesPanel.js';
-import { formatDateTime, formatDuration, formatNative, formatPoints, formatTime, formatUsd } from '../lib/format.js';
+import { formatDateTime, formatDuration, formatNative, formatPoints, formatTime, formatUsd, originalCashTotal } from '../lib/format.js';
 
 const api = window.swr;
 
@@ -55,6 +55,16 @@ export function Dashboard(): JSX.Element {
   const [editing, setEditing] = useState<Flight | undefined>(undefined);
   const [selected, setSelected] = useState<FlightWithComparison | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [airlineFilter, setAirlineFilter] = useState<string>('all');
+
+  const editingGroupLegs = useMemo<Flight[] | undefined>(() => {
+    if (!editing) return undefined;
+    const legs = flights
+      .filter((item) => item.flight.confirmationNumber === editing.confirmationNumber)
+      .map((item) => item.flight)
+      .sort((left, right) => left.departureDateTime.localeCompare(right.departureDateTime));
+    return legs.length >= 2 ? legs : undefined;
+  }, [editing, flights]);
 
   function toggleExpanded(flightId: string): void {
     setExpanded((prev) => {
@@ -131,12 +141,23 @@ export function Dashboard(): JSX.Element {
     const now = Date.now();
     return flights.filter((f) => {
       if (passengerFilter !== 'all' && f.flight.passengerId !== passengerFilter) return false;
+      if (airlineFilter !== 'all' && f.flight.airline !== airlineFilter) return false;
       // Flown flights move to the Past Flights blade.
       const departed = Date.parse(f.flight.departureDateTime);
       if (Number.isFinite(departed) && departed < now) return false;
       return true;
     });
-  }, [flights, passengerFilter]);
+  }, [flights, passengerFilter, airlineFilter]);
+
+  // Airlines actually present among the tracked flights, for the filter dropdown.
+  const airlineOptions = useMemo(() => {
+    const present = new Set<string>();
+    for (const f of flights) present.add(f.flight.airline);
+    const items = [...present]
+      .sort()
+      .map((a) => ({ value: a, label: AIRLINE_LABELS[a as Airline] ?? a }));
+    return [{ value: 'all', label: 'All airlines' }, ...items];
+  }, [flights]);
 
   // Round trips are stored as separate legs sharing a confirmation number. Group
   // them so the cost columns can show the booking's true combined totals (e.g.
@@ -180,7 +201,7 @@ export function Dashboard(): JSX.Element {
       g.count += 1;
       g.legIds.push(it.flight.id);
       g.points += it.flight.originalCost.points ?? 0;
-      g.cashUsd += it.flight.originalCost.cashUsd ?? 0;
+      g.cashUsd += originalCashTotal(it.flight) ?? 0;
       g.valueUsd += it.comparison?.originalValueUsd ?? 0;
       if (it.flight.originalMarketCashUsd != null) {
         g.marketCashUsd += it.flight.originalMarketCashUsd;
@@ -355,6 +376,12 @@ export function Dashboard(): JSX.Element {
           onChange={setPassengerFilter}
           options={[{ value: 'all', label: 'All passengers' }, ...passengers.map((p) => ({ value: p.id, label: p.fullName }))]}
         />
+        <FilterSelect
+          label="Airline"
+          value={airlineFilter}
+          onChange={setAirlineFilter}
+          options={airlineOptions}
+        />
       </div>
 
       <div className="flex flex-1 flex-col overflow-hidden px-7 pb-7">
@@ -492,7 +519,7 @@ export function Dashboard(): JSX.Element {
                         ) : (
                           <>
                             {formatNative(
-                              isPoints ? item.flight.originalCost.points : item.flight.originalCost.cashUsd,
+                              isPoints ? item.flight.originalCost.points : originalCashTotal(item.flight),
                               type,
                             )}
                             {isPoints && item.flight.originalMarketCashUsd != null ? (
@@ -730,6 +757,7 @@ export function Dashboard(): JSX.Element {
         <FlightFormModal
           passengers={passengers}
           existing={editing}
+          groupLegs={editingGroupLegs}
           onClose={() => setShowForm(false)}
           onSaved={refreshFlights}
         />

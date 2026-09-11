@@ -21,7 +21,7 @@ function makeFlight(overrides: Partial<Flight> = {}): Flight {
     confirmationNumber: 'ABC123',
     route: { origin: { code: 'MDW' }, destination: { code: 'DEN' } },
     departureDateTime: '2026-08-14T09:35:00-05:00',
-    fareType: FareType.WannaGetAway,
+    fareType: FareType.Basic,
     originalCost: {
       purchaseType: PurchaseType.Cash,
       cashUsd: 149.98,
@@ -39,7 +39,7 @@ function makeFlight(overrides: Partial<Flight> = {}): Flight {
 function makeQuote(overrides: Partial<PriceQuote> = {}): PriceQuote {
   return {
     flightId: 'flight_1',
-    fareType: FareType.WannaGetAway,
+    fareType: FareType.Basic,
     departureDateTime: '2026-08-14T09:35:00-05:00',
     fetchedAt: '2026-06-16T12:00:00Z',
     providerId: 'southwest',

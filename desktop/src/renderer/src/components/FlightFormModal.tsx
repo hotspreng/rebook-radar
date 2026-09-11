@@ -32,7 +32,7 @@ export function FlightFormModal({ passengers, existing, groupLegs, onClose, onSa
   const [origin, setOrigin] = useState(existing?.route.origin.code ?? '');
   const [destination, setDestination] = useState(existing?.route.destination.code ?? '');
   const [departure, setDeparture] = useState(existing?.departureDateTime?.slice(0, 16) ?? '');
-  const [fareType, setFareType] = useState<FareType>(existing?.fareType ?? FareType.WannaGetAway);
+  const [fareType, setFareType] = useState<FareType>(existing?.fareType ?? FareType.Choice);
   const [purchaseType, setPurchaseType] = useState<PurchaseType>(
     existing?.originalCost.purchaseType ?? PurchaseType.Cash,
   );

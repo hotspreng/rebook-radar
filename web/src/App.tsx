@@ -29,7 +29,7 @@ const sampleFlight: Flight = {
   confirmationNumber: 'DEMO12',
   route: { origin: { code: 'MDW' }, destination: { code: 'DEN' } },
   departureDateTime: '2026-08-14T09:35:00-05:00',
-  fareType: FareType.WannaGetAway,
+  fareType: FareType.Choice,
   originalCost: { purchaseType: PurchaseType.Points, points: 12000, taxesAndFeesUsd: 5.6 },
   bookingDate: '2026-05-01',
   source: FlightSource.Manual,
@@ -52,7 +52,7 @@ const demoProvider: AirlineProvider = {
     return [
       {
         departureDateTime: sampleFlight.departureDateTime,
-        fareType: FareType.WannaGetAway,
+        fareType: FareType.Choice,
         points: 9000,
         pointsTaxesAndFeesUsd: 5.6,
         stops: 0,

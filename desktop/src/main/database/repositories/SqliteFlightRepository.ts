@@ -2,6 +2,34 @@ import type { Flight, FlightRepository, FlightSegment, PaymentMethod } from '@sw
 import { Airline, Cabin, FareType, FlightSource, PurchaseType } from '@swr/core';
 import { execute, queryAll, queryOne } from '../db.js';
 
+/**
+ * Map a stored fare_type string to a {@link FareType}. Older records were saved
+ * under the pre-2025 Southwest fare names; migrate those to the current 2025
+ * products (Basic / Choice / Choice Preferred / Choice Extra) on read.
+ */
+function normalizeStoredFareType(value: string | null | undefined): FareType {
+  switch (value) {
+    case 'wanna_get_away':
+      return FareType.Basic;
+    case 'wanna_get_away_plus':
+      return FareType.Choice;
+    case 'anytime':
+      return FareType.ChoicePreferred;
+    case 'business_select':
+      return FareType.ChoiceExtra;
+    case 'basic':
+      return FareType.Basic;
+    case 'choice':
+      return FareType.Choice;
+    case 'choice_preferred':
+      return FareType.ChoicePreferred;
+    case 'choice_extra':
+      return FareType.ChoiceExtra;
+    default:
+      return FareType.Unknown;
+  }
+}
+
 interface FlightRow {
   id: string;
   passenger_id: string;
@@ -59,7 +87,7 @@ function toDomain(row: FlightRow): Flight {
     arrivalDateTime: row.arrival_dt ?? undefined,
     durationMinutes: row.duration_minutes ?? undefined,
     segments: segments && segments.length ? segments : undefined,
-    fareType: row.fare_type as FareType,
+    fareType: normalizeStoredFareType(row.fare_type),
     cabin: (row.cabin as Cabin) ?? undefined,
     originalCost: {
       purchaseType: row.purchase_type as PurchaseType,

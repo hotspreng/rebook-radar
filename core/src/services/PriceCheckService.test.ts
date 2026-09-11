@@ -18,7 +18,7 @@ function makeFlight(overrides: Partial<Flight> = {}): Flight {
     confirmationNumber: 'C57HXM',
     route: { origin: { code: 'MDW' }, destination: { code: 'ROC' } },
     departureDateTime: '2026-10-13T13:00:00',
-    fareType: FareType.WannaGetAway,
+    fareType: FareType.Basic,
     originalCost: {
       purchaseType: PurchaseType.Points,
       points: 15000,

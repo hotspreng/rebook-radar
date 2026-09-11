@@ -174,12 +174,33 @@ const TIME_RE = /^\d{1,2}:\d{2}\s*[AP]M$/i;
 /** A flight-number line, e.g. "AA 89" / "AA89". */
 const FLIGHT_NO_RE = /^AA\s?(\d{1,4})$/;
 
+/** Parse "Thursday, January 7, 2027" → ISO "2027-01-07", or undefined. */
+function parseWeekdayDate(line: string): string | undefined {
+  const dm = line.match(WEEKDAY_DATE_RE);
+  if (!dm) return undefined;
+  const month = MONTHS[dm[1]!.slice(0, 3).toLowerCase()];
+  if (!month) return undefined;
+  return `${dm[3]}-${month}-${dm[2]!.padStart(2, '0')}`;
+}
+
 /**
- * Parse each flight in the itinerary. American lists one flight per block that
- * starts with an "AA <n>" line and contains a full weekday date followed by the
- * origin/destination code + time pairs. We isolate each block between
- * consecutive "AA <n>" lines so a connecting itinerary yields one flight each,
- * and trailing receipt/marketing text can't leak into the flight fields.
+ * Parse each flight in the itinerary. American's HTML-stripped confirmations
+ * put one field per line and lay each segment out as:
+ *
+ *   Thursday, January 7, 2027   ← date (once per travel day)
+ *   ORD                         ← origin code
+ *   Chicago O'Hare
+ *   11:55 AM                    ← departure time
+ *   AA 89                       ← flight number
+ *   OGG                         ← destination code
+ *   Maui Kahului
+ *   5:40 PM                     ← arrival time
+ *
+ * The flight number sits in the MIDDLE of the block, so for each "AA <n>" line
+ * we look BACKWARD for the origin code + departure time (and the most recent
+ * date) and FORWARD for the destination code + arrival time. Scanning is bounded
+ * by the neighbouring "AA <n>" lines so a connecting itinerary yields one flight
+ * each and receipt/marketing text can't leak in.
  */
 function parseFlights(body: string): ParsedFlight[] {
   const lines = body.split('\n').map((l) => l.trim());
@@ -189,43 +210,54 @@ function parseFlights(body: string): ParsedFlight[] {
   });
 
   const flights: ParsedFlight[] = [];
+  let lastDate: string | undefined;
   for (let k = 0; k < flightIdx.length; k++) {
-    const start = flightIdx[k]!;
-    const end = k + 1 < flightIdx.length ? flightIdx[k + 1]! : lines.length;
-    const block = lines.slice(start, end);
+    const at = flightIdx[k]!;
+    const beforeStart = k > 0 ? flightIdx[k - 1]! + 1 : 0;
+    const afterEnd = k + 1 < flightIdx.length ? flightIdx[k + 1]! : lines.length;
 
-    const flightNumber = `AA ${block[0]!.match(FLIGHT_NO_RE)![1]}`;
+    const flightNumber = `AA ${lines[at]!.match(FLIGHT_NO_RE)![1]}`;
 
+    // Look backward from the flight line for departure time, origin code and
+    // the segment date (carry the previous segment's date if this block omits
+    // it, e.g. a same-day connection).
+    let origin: string | undefined;
+    let departureTime: string | undefined;
     let date: string | undefined;
-    const codes: string[] = [];
-    const times: string[] = [];
-    for (const line of block) {
+    for (let i = at - 1; i >= beforeStart; i--) {
+      const line = lines[i]!;
+      if (!departureTime && TIME_RE.test(line)) departureTime = line;
+      else if (!origin && AIRPORT_CODE_RE.test(line)) origin = line;
       if (!date) {
-        const dm = line.match(WEEKDAY_DATE_RE);
-        if (dm) {
-          const month = MONTHS[dm[1]!.slice(0, 3).toLowerCase()];
-          if (month) {
-            date = `${dm[3]}-${month}-${dm[2]!.padStart(2, '0')}`;
-            continue;
-          }
-        }
+        const d = parseWeekdayDate(line);
+        if (d) date = d;
       }
-      if (AIRPORT_CODE_RE.test(line)) codes.push(line);
-      else if (TIME_RE.test(line)) times.push(line);
+    }
+    date ??= lastDate;
+
+    // Look forward for the destination code and arrival time.
+    let destination: string | undefined;
+    let arrivalTime: string | undefined;
+    for (let i = at + 1; i < afterEnd; i++) {
+      const line = lines[i]!;
+      if (!destination && AIRPORT_CODE_RE.test(line)) destination = line;
+      else if (!arrivalTime && TIME_RE.test(line)) arrivalTime = line;
+      if (destination && arrivalTime) break;
     }
 
-    if (!date || codes.length < 2 || times.length < 2) continue;
-    const departureTime = to24(times[0]!);
-    const arrivalTime = to24(times[1]!);
-    if (!departureTime || !arrivalTime) continue;
+    if (!date || !origin || !destination || !departureTime || !arrivalTime) continue;
+    const dep24 = to24(departureTime);
+    const arr24 = to24(arrivalTime);
+    if (!dep24 || !arr24) continue;
 
+    lastDate = date;
     flights.push({
       flightNumber,
-      origin: codes[0]!,
-      destination: codes[1]!,
+      origin,
+      destination,
       date,
-      departureTime,
-      arrivalTime,
+      departureTime: dep24,
+      arrivalTime: arr24,
     });
   }
   return flights;

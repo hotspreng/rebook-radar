@@ -32,7 +32,7 @@ export const DEFAULT_COMPARISON_OPTIONS: ComparisonOptions = {
  *  - No change/cancel fees on any fare.
  *  - Points bookings: points are fully refundable to the account; taxes/fees
  *    refunded to original form of payment.
- *  - Cash (Wanna Get Away) bookings: refunded as Transferable Flight Credit /
+ *  - Cash bookings: refunded as Transferable Flight Credit /
  *    flight credit that can be applied to a new, cheaper booking — you keep the
  *    leftover difference.
  *
@@ -200,7 +200,7 @@ export class PricingComparisonService {
       }
       return (
         `The current fare is $${savingsNative.toFixed(2)} cheaper. Southwest has no change fees ` +
-        `and refunds Wanna Get Away fares as flight credit, so cancel and rebook — the leftover ` +
+        `and refunds cash fares as flight credit, so cancel and rebook — the leftover ` +
         `$${savingsNative.toFixed(2)} stays as usable flight credit.`
       );
     }

@@ -1,8 +1,10 @@
 import {
+  FlightSource,
   PurchaseType,
   Recommendation,
   type Cabin,
   type FareType,
+  type Flight,
 } from '@swr/core';
 
 export function formatUsd(value: number | undefined): string {
@@ -59,11 +61,28 @@ export function formatNative(amount: number | undefined, type: PurchaseType): st
   return type === PurchaseType.Points ? formatPoints(amount) : formatUsd(amount);
 }
 
+/**
+ * The all-in original cash total to display for a flight.
+ *
+ * Email-imported trips store `cashUsd` as the grand total the traveler paid
+ * (taxes & fees already included). Manually-entered flights instead store the
+ * base fare in `cashUsd` with taxes & fees captured separately, so those two
+ * are summed here. Returns `undefined` when no cash amount is known.
+ */
+export function originalCashTotal(flight: Flight): number | undefined {
+  const cash = flight.originalCost.cashUsd;
+  if (cash == null) return undefined;
+  if (flight.source === FlightSource.Manual) {
+    return Math.round((cash + (flight.originalCost.taxesAndFeesUsd ?? 0)) * 100) / 100;
+  }
+  return cash;
+}
+
 export const FARE_LABELS: Record<FareType, string> = {
-  wanna_get_away: 'Wanna Get Away',
-  wanna_get_away_plus: 'Wanna Get Away+',
-  anytime: 'Anytime',
-  business_select: 'Business Select',
+  basic: 'Basic',
+  choice: 'Choice',
+  choice_preferred: 'Choice Preferred',
+  choice_extra: 'Choice Extra',
   unknown: 'Unknown',
 };
 

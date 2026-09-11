@@ -21,16 +21,20 @@ function msg(partial: Partial<EmailMessage>): EmailMessage {
 }
 
 // Real American "trip confirmation and receipt" body shape (ORD→OGG, cash,
-// three passengers), as the Gmail HTML-strip hands it to the parser.
+// three passengers), as the Gmail HTML-strip hands it to the parser. Each field
+// lands on its own line and the "AA <n>" flight number sits in the MIDDLE of
+// the segment block: date, origin code + city + departure time come BEFORE it,
+// destination code + city + arrival time come AFTER it.
 const TRIP_CONFIRMATION = `
 Your trip confirmation and receipt
 You can check in via the American app 24 hours before your trip and get your mobile boarding pass.
-AA 89
-Confirmation code: QDFZSJ
+Confirmation code:
+QDFZSJ
 Thursday, January 7, 2027
 ORD
 Chicago O'Hare
 11:55 AM
+AA 89
 OGG
 Maui Kahului
 5:40 PM

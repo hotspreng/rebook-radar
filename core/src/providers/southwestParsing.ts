@@ -29,15 +29,15 @@ export function normalizeFareType(label: string | null | undefined): FareType {
   if (!label) return FareType.Unknown;
   const l = label.toLowerCase();
   // 2025 fare rebrand: Basic / Choice / Choice Preferred / Choice Extra.
-  if (l.includes('choice extra')) return FareType.BusinessSelect;
-  if (l.includes('choice preferred')) return FareType.WannaGetAwayPlus;
-  if (l.includes('choice')) return FareType.Anytime;
-  if (l.includes('basic')) return FareType.WannaGetAway;
-  // Legacy fare names.
-  if (l.includes('business')) return FareType.BusinessSelect;
-  if (l.includes('anytime')) return FareType.Anytime;
-  if (l.includes('plus')) return FareType.WannaGetAwayPlus;
-  if (l.includes('wanna') || l.includes('get away')) return FareType.WannaGetAway;
+  if (l.includes('choice extra')) return FareType.ChoiceExtra;
+  if (l.includes('choice preferred')) return FareType.ChoicePreferred;
+  if (l.includes('choice')) return FareType.Choice;
+  if (l.includes('basic')) return FareType.Basic;
+  // Legacy fare names → mapped to the equivalent 2025 product.
+  if (l.includes('business')) return FareType.ChoiceExtra;
+  if (l.includes('anytime')) return FareType.ChoicePreferred;
+  if (l.includes('plus')) return FareType.Choice;
+  if (l.includes('wanna') || l.includes('get away')) return FareType.Basic;
   return FareType.Unknown;
 }
 

@@ -266,7 +266,7 @@ function parseRoute(body: string): [string, string] {
   return [codes[0] ?? '', ''];
 }
 
-const NON_NAME = /\b(wanna|anytime|business|select|total|confirmation|depart|arrive|flight|fare|passenger)\b/i;
+const NON_NAME = /\b(wanna|anytime|business|select|basic|choice|preferred|extra|total|confirmation|depart|arrive|flight|fare|passenger)\b/i;
 
 function parsePassengerNames(subject: string, body: string): string[] {
   // Cancellation/change subjects lead with the passenger:

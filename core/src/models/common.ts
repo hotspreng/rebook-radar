@@ -12,12 +12,19 @@ export enum PurchaseType {
   Points = 'points',
 }
 
-/** Southwest fare classes relevant to refundability / rebooking. */
+/**
+ * Southwest fare classes relevant to refundability / rebooking.
+ *
+ * These are the 2025 rebrand products (low → high): Basic, Choice, Choice
+ * Preferred, Choice Extra. Legacy bookings stored under the old names
+ * (Wanna Get Away / Wanna Get Away+ / Anytime / Business Select) are migrated
+ * to their 2025 equivalents when read from the database.
+ */
 export enum FareType {
-  WannaGetAway = 'wanna_get_away',
-  WannaGetAwayPlus = 'wanna_get_away_plus',
-  Anytime = 'anytime',
-  BusinessSelect = 'business_select',
+  Basic = 'basic',
+  Choice = 'choice',
+  ChoicePreferred = 'choice_preferred',
+  ChoiceExtra = 'choice_extra',
   Unknown = 'unknown',
 }
 
