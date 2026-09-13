@@ -33,6 +33,11 @@ export interface RetrievedTrip {
   paidCashUsd?: number;
   paidPoints?: number;
   taxesAndFeesUsd?: number;
+  /** Original non-USD surcharge awaiting conversion by the host importer. */
+  foreignTaxesAndFees?: {
+    amount: number;
+    currency: string;
+  };
   /**
    * The FIRST-booked price for this confirmation, when it differs from the
    * current price because the trip was later changed/rebooked at a lower fare.

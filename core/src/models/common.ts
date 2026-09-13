@@ -63,6 +63,7 @@ export enum Airline {
   United = 'united',
   Delta = 'delta',
   American = 'american',
+  AirCanada = 'air-canada',
 }
 
 /** Display name for an {@link Airline}. */
@@ -71,6 +72,7 @@ export const AIRLINE_LABELS: Record<Airline, string> = {
   [Airline.United]: 'United',
   [Airline.Delta]: 'Delta',
   [Airline.American]: 'American',
+  [Airline.AirCanada]: 'Air Canada',
 };
 
 /** A monetary amount paired with the unit it is measured in. */

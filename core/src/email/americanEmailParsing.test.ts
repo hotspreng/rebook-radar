@@ -124,6 +124,57 @@ test('parseAmericanEmail parses a real trip confirmation (route, date, fare, pas
   ]);
 });
 
+test('parseAmericanEmail splits a multi-direction reservation into tracked legs', () => {
+  const body = `
+Your trip confirmation and receipt
+Confirmation code: ABC123
+Thursday, January 7, 2027
+ORD
+Chicago O'Hare
+8:00 AM
+AA 101
+DFW
+Dallas Fort Worth
+10:30 AM
+AA 202
+OGG
+Maui Kahului
+2:00 PM
+Thursday, January 14, 2027
+OGG
+Maui Kahului
+3:00 PM
+AA 303
+LAX
+Los Angeles
+10:00 PM
+Friday, January 15, 2027
+LAX
+Los Angeles
+9:00 AM
+AA 404
+ORD
+Chicago O'Hare
+3:00 PM
+Joshua Sprenger
+New ticket $500.00
+Taxes & carrier-imposed fees $50.00
+`;
+
+  const event = parseAmericanEmail(
+    msg({ subject: 'Your trip confirmation (ABC123)', body }),
+  );
+  assert.ok(event?.trip);
+  assert.equal(event.trip.origin, 'ORD');
+  assert.equal(event.trip.destination, 'OGG');
+  assert.equal(event.trip.segments?.length, 2);
+  assert.equal(event.trip.legs?.length, 3);
+  assert.deepEqual(
+    event.trip.legs?.map((leg) => [leg.origin, leg.destination]),
+    [['ORD', 'OGG'], ['OGG', 'LAX'], ['LAX', 'ORD']],
+  );
+});
+
 test('parseAmericanEmail ignores a marketing email with no itinerary', () => {
   const event = parseAmericanEmail(
     msg({

@@ -5,4 +5,5 @@ export * from './southwestEmailParsing.js';
 export * from './unitedEmailParsing.js';
 export * from './deltaEmailParsing.js';
 export * from './americanEmailParsing.js';
+export * from './airCanadaEmailParsing.js';
 export * from './EmailTripImportService.js';

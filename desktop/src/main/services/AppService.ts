@@ -416,6 +416,7 @@ export class AppService {
     let southwest: EmailMessage[];
     let united: EmailMessage[];
     let american: EmailMessage[];
+    let airCanada: EmailMessage[];
     try {
       southwest = await this.fetchTransactional(
         source,
@@ -432,6 +433,11 @@ export class AppService {
         'from:no-reply@info.email.aa.com newer_than:13m',
         'from:aa.com newer_than:13m',
       );
+      airCanada = await this.fetchTransactional(
+        source,
+        'from:(notification@notification.aircanada.ca OR confirmation@aircanada.ca) newer_than:13m',
+        'from:aircanada.ca newer_than:13m',
+      );
     } catch (err) {
       if (err instanceof GmailAuthError) {
         // The stored refresh token is dead (expired/revoked). Clear the
@@ -444,14 +450,16 @@ export class AppService {
       }
       throw err;
     }
-    const messages = [...southwest, ...united, ...american];
+    const messages = [...southwest, ...united, ...american, ...airCanada];
     log.info('Fetched transactional emails', {
       southwest: southwest.length,
       united: united.length,
       american: american.length,
+      airCanada: airCanada.length,
     });
 
     const folded = new EmailTripImportService().fold(messages, { now: new Date() });
+    await this.convertForeignTaxesToUsd([...folded.active, ...folded.cancelledTrips]);
     this.deps.onEmailProgress?.({
       phase: 'parsing',
       scanned: messages.length,
@@ -577,6 +585,40 @@ export class AppService {
         ? (done, total) => this.deps.onEmailProgress?.({ phase: 'scanning', scanned: done, total })
         : undefined,
     });
+  }
+
+  /** Convert foreign award surcharges using Frankfurter's latest published
+   * rate. A rate outage never blocks importing the itinerary itself. */
+  private async convertForeignTaxesToUsd(trips: RetrievedTrip[]): Promise<void> {
+    const cadTrips = trips.filter(
+      (trip) => trip.foreignTaxesAndFees?.currency === 'CAD' && trip.taxesAndFeesUsd == null,
+    );
+    if (cadTrips.length === 0) return;
+
+    try {
+      const response = await fetch('https://api.frankfurter.dev/v1/latest?from=CAD&to=USD', {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.json() as { date?: string; rates?: { USD?: number } };
+      const rate = body.rates?.USD;
+      if (rate == null || !Number.isFinite(rate) || rate <= 0) {
+        throw new Error('CAD/USD rate was missing from the response');
+      }
+
+      for (const trip of cadTrips) {
+        trip.taxesAndFeesUsd = Math.round(trip.foreignTaxesAndFees!.amount * rate * 100) / 100;
+      }
+      log.info('Converted Air Canada surcharges from CAD to USD', {
+        rate,
+        rateDate: body.date,
+        trips: cadTrips.length,
+      });
+    } catch (error) {
+      log.warn('Could not convert Air Canada CAD surcharge; importing without it', {
+        error: String(error),
+      });
+    }
   }
 
   private dumpDebug(label: string, content: string): void {
@@ -889,7 +931,7 @@ export class AppService {
     // Don't re-fetch once we've already captured an actual fare.
     if (flight.originalMarketCashUsd != null) return;
     try {
-      const provider = this.createProvider(flight.airline);
+      const provider = this.createProvider(flight.airline, this.fareSearchAirlineName(flight));
       const options = this.comparisonOptions(flight.airline);
       const result = await this.priceCheck.check(flight, provider, undefined, options);
       const cash = result.quote?.cashUsd;
@@ -950,7 +992,7 @@ export class AppService {
   async checkOne(flightId: string): Promise<FlightWithComparison> {
     const flight = await this.deps.flights.get(flightId);
     if (!flight) throw new Error(`Flight ${flightId} not found.`);
-    const provider = this.createProvider(flight.airline);
+    const provider = this.createProvider(flight.airline, this.fareSearchAirlineName(flight));
     const options = this.comparisonOptions(flight.airline);
     const result = await this.priceCheck.check(flight, provider, undefined, options);
     await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
@@ -969,7 +1011,7 @@ export class AppService {
 
     for (const flight of flights) {
       try {
-        const provider = this.createProvider(flight.airline);
+        const provider = this.createProvider(flight.airline, this.fareSearchAirlineName(flight));
         const options = this.comparisonOptions(flight.airline);
         const result = await this.priceCheck.check(flight, provider, undefined, options);
         await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
@@ -1375,14 +1417,17 @@ export class AppService {
   }
 
   /** Build the SerpApi Google Flights fare provider for the given airline. */
-  private createProvider(airline: Airline = Airline.Southwest): AirlineProvider {
+  private createProvider(
+    airline: Airline = Airline.Southwest,
+    airlineName: string = AIRLINE_LABELS[airline],
+  ): AirlineProvider {
     // Estimate award points from a cash fare using the user's cents-per-point
     // rate so estimates track the airline's actual award pricing.
     const estimation = { centsPerPoint: this.pointValueCentsFor(airline) / 100 };
     return new GoogleFlightsSerpApiProvider({
       // Keep only itineraries flown by this flight's airline so a United price
       // check never matches a cheaper Southwest fare and vice-versa.
-      airlineName: AIRLINE_LABELS[airline],
+      airlineName,
       fetchJson: async (url) => {
         // SerpApi runs the Google Flights search live, so allow generous time
         // but never hang forever (Node has no default fetch timeout).
@@ -1398,6 +1443,15 @@ export class AppService {
       },
       estimation,
     });
+  }
+
+  /** Air Canada reward tickets can be operated by a partner. Search the known
+   * operating carrier while retaining Aeroplan's points valuation. */
+  private fareSearchAirlineName(flight: Flight): string {
+    if (flight.airline !== Airline.AirCanada) return AIRLINE_LABELS[flight.airline];
+    const prefix = flight.segments?.[0]?.flightNumber?.match(/^([A-Z0-9]{2})\b/i)?.[1]?.toUpperCase();
+    if (prefix === 'UA') return AIRLINE_LABELS[Airline.United];
+    return AIRLINE_LABELS[Airline.AirCanada];
   }
 
   private async requireAccount(id: string): Promise<Account> {

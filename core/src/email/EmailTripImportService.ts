@@ -5,6 +5,7 @@ import { parseSouthwestEmail } from './southwestEmailParsing.js';
 import { isUnitedEmail, parseUnitedEmail } from './unitedEmailParsing.js';
 import { isDeltaEmail, parseDeltaEmail } from './deltaEmailParsing.js';
 import { isAmericanEmail, parseAmericanEmail } from './americanEmailParsing.js';
+import { isAirCanadaEmail, parseAirCanadaEmail } from './airCanadaEmailParsing.js';
 
 /**
  * Parse a single confirmation email into a trip event, dispatching to the
@@ -13,6 +14,7 @@ import { isAmericanEmail, parseAmericanEmail } from './americanEmailParsing.js';
  * everything else is treated as Southwest.
  */
 function parseAirlineEmail(message: EmailMessage): ParsedTripEvent | undefined {
+  if (isAirCanadaEmail(message.from)) return parseAirCanadaEmail(message);
   if (isUnitedEmail(message.from)) return parseUnitedEmail(message);
   if (isDeltaEmail(message.from)) return parseDeltaEmail(message);
   if (isAmericanEmail(message.from)) return parseAmericanEmail(message);
@@ -20,7 +22,7 @@ function parseAirlineEmail(message: EmailMessage): ParsedTripEvent | undefined {
 }
 
 
-/** Result of folding a batch of Southwest emails into current trip state. */
+/** Result of folding a batch of airline emails into current trip state. */
 export interface EmailImportResult {
   /** Trips that are currently active and depart in the future. */
   active: RetrievedTrip[];
@@ -62,7 +64,7 @@ interface FoldState {
 }
 
 /**
- * Folds Southwest confirmation emails into the current set of upcoming trips.
+ * Folds airline confirmation emails into the current set of upcoming trips.
  *
  * Strategy (the core "smartness"):
  *  1. Parse each email into a {@link ParsedTripEvent} (booked/changed/cancelled).
@@ -177,6 +179,7 @@ function mergeTrip(prev: RetrievedTrip | undefined, next: RetrievedTrip | undefi
     purchaseType: next.purchaseType ?? prev.purchaseType,
     paidCashUsd: next.paidCashUsd ?? prev.paidCashUsd,
     paidPoints: next.paidPoints ?? prev.paidPoints,
+    foreignTaxesAndFees: next.foreignTaxesAndFees ?? prev.foreignTaxesAndFees,
     originalPaidPoints: next.originalPaidPoints ?? prev.originalPaidPoints,
     originalPaidCashUsd: next.originalPaidCashUsd ?? prev.originalPaidCashUsd,
     taxesAndFeesUsd: next.taxesAndFeesUsd ?? prev.taxesAndFeesUsd,

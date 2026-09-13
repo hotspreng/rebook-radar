@@ -17,6 +17,9 @@ const DEFAULT_DELTA_POINT_VALUE_CENTS = 1.2;
  *  used as the default American rate when no prior per-airline value exists. */
 const DEFAULT_AMERICAN_POINT_VALUE_CENTS = 1.5;
 
+/** Default valuation for Aeroplan points. */
+const DEFAULT_AEROPLAN_POINT_VALUE_CENTS = 1.5;
+
 /** Persists user-editable settings as a single JSON row. */
 export class SettingsStore {
   constructor(private readonly defaults: AppConfig) {}
@@ -29,6 +32,7 @@ export class SettingsStore {
         [Airline.United]: DEFAULT_UNITED_POINT_VALUE_CENTS,
         [Airline.Delta]: DEFAULT_DELTA_POINT_VALUE_CENTS,
         [Airline.American]: DEFAULT_AMERICAN_POINT_VALUE_CENTS,
+        [Airline.AirCanada]: DEFAULT_AEROPLAN_POINT_VALUE_CENTS,
       },
       pollIntervalMinutes: this.defaults.pollIntervalMinutes,
       savingsAlertThresholdUsd: this.defaults.savingsAlertThresholdUsd,
@@ -64,10 +68,11 @@ export class SettingsStore {
         [Airline.United]: DEFAULT_UNITED_POINT_VALUE_CENTS,
         [Airline.Delta]: DEFAULT_DELTA_POINT_VALUE_CENTS,
         [Airline.American]: DEFAULT_AMERICAN_POINT_VALUE_CENTS,
+        [Airline.AirCanada]: DEFAULT_AEROPLAN_POINT_VALUE_CENTS,
       };
     } else {
       // Backfill any airline added after this settings row was first written
-      // (e.g. Delta) so every airline always has a configured rate.
+      // so every airline always has a configured rate.
       merged.pointValueCentsByAirline = {
         ...this.defaultSettings().pointValueCentsByAirline,
         ...parsed.pointValueCentsByAirline,

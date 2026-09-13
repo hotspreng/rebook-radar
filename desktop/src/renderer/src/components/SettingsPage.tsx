@@ -145,6 +145,15 @@ export function SettingsPage(): JSX.Element {
                 onCommit={(v) => setAirlineRate(Airline.American, v)}
               />
             </Field>
+            <Field
+              label="Air Canada — cents per point"
+              hint="Default valuation for Air Canada Aeroplan points."
+            >
+              <AwardRateInput
+                value={draft.pointValueCentsByAirline[Airline.AirCanada]}
+                onCommit={(v) => setAirlineRate(Airline.AirCanada, v)}
+              />
+            </Field>
           </div>
           <p className="mt-3 text-xs text-slate-500">
             Used to estimate award points from a cash fare and to value points savings in

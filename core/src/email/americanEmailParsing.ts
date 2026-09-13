@@ -3,6 +3,7 @@ import { normalizeCabin } from './cabin.js';
 import {
   RetrievedFlightSegment,
   RetrievedTrip,
+  RetrievedTripLeg,
 } from '../providers/AirlineProvider.js';
 import { EmailMessage } from './EmailMessage.js';
 import { ParsedTripEvent, TripEventType } from './TripEvent.js';
@@ -263,6 +264,56 @@ function parseFlights(body: string): ParsedFlight[] {
   return flights;
 }
 
+const LEG_BREAK_MS = 8 * 60 * 60 * 1000;
+
+/** Group short same-airport connections into one direction and split longer
+ * stopovers or discontinuous routes into separate tracked legs. */
+function groupFlightsIntoLegs(flights: ParsedFlight[]): RetrievedTripLeg[] {
+  if (flights.length === 0) return [];
+
+  const groups: ParsedFlight[][] = [[flights[0]!]];
+  for (let i = 1; i < flights.length; i++) {
+    const previous = flights[i - 1]!;
+    const current = flights[i]!;
+    const previousArrivalDate =
+      previous.arrivalTime < previous.departureTime ? nextDay(previous.date) : previous.date;
+    const gapMs =
+      new Date(`${current.date}T${current.departureTime}:00`).getTime()
+      - new Date(`${previousArrivalDate}T${previous.arrivalTime}:00`).getTime();
+
+    if (current.origin === previous.destination && gapMs >= 0 && gapMs <= LEG_BREAK_MS) {
+      groups[groups.length - 1]!.push(current);
+    } else {
+      groups.push([current]);
+    }
+  }
+
+  return groups.map((group) => {
+    const first = group[0]!;
+    const last = group[group.length - 1]!;
+    const segments: RetrievedFlightSegment[] = group.map((flight) => {
+      const arrivalDate =
+        flight.arrivalTime < flight.departureTime ? nextDay(flight.date) : flight.date;
+      return {
+        origin: flight.origin,
+        destination: flight.destination,
+        departureDateTime: `${flight.date}T${flight.departureTime}:00`,
+        arrivalDateTime: `${arrivalDate}T${flight.arrivalTime}:00`,
+        flightNumber: flight.flightNumber,
+      };
+    });
+    const lastArrivalDate =
+      last.arrivalTime < last.departureTime ? nextDay(last.date) : last.date;
+    return {
+      origin: first.origin,
+      destination: last.destination,
+      departureDateTime: `${first.date}T${first.departureTime}:00`,
+      arrivalDateTime: `${lastArrivalDate}T${last.arrivalTime}:00`,
+      segments: segments.length > 1 ? segments : undefined,
+    };
+  });
+}
+
 const AADVANTAGE_NAME_RE =
   /^([A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+)+)\s*[-–]\s*AAdvantage/gm;
 const BARE_NAME_RE = /^([A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+)+)\s*\nNew ticket\b/gm;
@@ -345,26 +396,8 @@ function parseAmericanTripDetails(
   const flights = parseFlights(body);
   if (flights.length === 0) return undefined;
 
-  const first = flights[0]!;
-  const last = flights[flights.length - 1]!;
-  const origin = first.origin;
-  const destination = last.destination;
-
-  const departureDateTime = `${first.date}T${first.departureTime}:00`;
-  const lastArrivalDate =
-    last.arrivalTime < last.departureTime ? nextDay(last.date) : last.date;
-  const arrivalDateTime = `${lastArrivalDate}T${last.arrivalTime}:00`;
-
-  const segments: RetrievedFlightSegment[] = flights.map((f) => {
-    const arrivalDate = f.arrivalTime < f.departureTime ? nextDay(f.date) : f.date;
-    return {
-      origin: f.origin,
-      destination: f.destination,
-      departureDateTime: `${f.date}T${f.departureTime}:00`,
-      arrivalDateTime: `${arrivalDate}T${f.arrivalTime}:00`,
-      flightNumber: f.flightNumber,
-    };
-  });
+  const legs = groupFlightsIntoLegs(flights);
+  const firstLeg = legs[0]!;
 
   const passengerNames = parseAmericanTravelers(body);
   const pricing = parseAmericanPricing(body);
@@ -373,11 +406,12 @@ function parseAmericanTripDetails(
     airline: Airline.American,
     confirmationNumber,
     passengerNames,
-    origin,
-    destination,
-    departureDateTime,
-    arrivalDateTime,
-    segments: segments.length > 1 ? segments : undefined,
+    origin: firstLeg.origin,
+    destination: firstLeg.destination,
+    departureDateTime: firstLeg.departureDateTime,
+    arrivalDateTime: firstLeg.arrivalDateTime,
+    segments: firstLeg.segments,
+    legs: legs.length > 1 ? legs : undefined,
     fareType: FareType.Unknown,
     cabin: parseAmericanCabin(body),
     purchaseType: pricing.purchaseType,

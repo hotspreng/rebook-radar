@@ -1,4 +1,4 @@
-import { Cabin, PurchaseType, Recommendation } from '@swr/core';
+import { AIRLINE_LABELS, Cabin, PurchaseType, Recommendation } from '@swr/core';
 import type { PriceHistoryEntry } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
 import { ArrowRight, RefreshCw, Pencil, Trash2, TrendingDown, TrendingUp, X } from 'lucide-react';
@@ -29,12 +29,15 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
       >
         <header className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
           <div>
-            <p className="text-xs uppercase tracking-wide text-slate-400">{item.passengerName}</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              {AIRLINE_LABELS[flight.airline] ?? flight.airline}
+            </p>
             <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
               {flight.route.origin.code}
               <ArrowRight size={16} className="text-slate-500" />
               {flight.route.destination.code}
             </h2>
+            <p className="text-xs text-slate-500">{item.passengerName}</p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800">
             <X size={18} />
