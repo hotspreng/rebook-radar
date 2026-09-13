@@ -33,6 +33,43 @@ test('a single future booking becomes active', () => {
   assert.equal(result.cancelledConfirmations.length, 0);
 });
 
+test('a forwarded American award confirmation is dispatched from its embedded sender', () => {
+  const result = svc.fold(
+    [
+      {
+        id: 'aa-award',
+        internalDate: Date.parse('2026-09-13T22:57:00Z'),
+        subject: 'Your trip confirmation (ORD - DEN)',
+        from: 'Josh Sprenger <josh.sprenger@gmail.com>',
+        body: `
+American Airlines <no-reply@info.email.aa.com>
+AA 4102
+Operated by Envoy Air as American Eagle
+Confirmation code: HBLZAQ
+Wednesday, October 14, 2026
+ORD
+Chicago O'Hare
+6:40 AM
+DEN
+Denver
+8:33 AM
+Class: Business (J)
+Joshua Sprenger - AAdvantage #: 0U5****
+New ticket 25,500 miles
+Taxes & carrier-imposed fees $5.60
+`,
+      },
+    ],
+    { now: new Date('2026-09-13T23:00:00Z') },
+  );
+
+  assert.equal(result.events, 1);
+  assert.equal(result.active.length, 1);
+  assert.equal(result.active[0].confirmationNumber, 'HBLZAQ');
+  assert.equal(result.active[0].paidPoints, 25_500);
+  assert.equal(result.active[0].taxesAndFeesUsd, 5.6);
+});
+
 test('booking then cancellation (latest wins) removes the trip', () => {
   const result = svc.fold(
     [

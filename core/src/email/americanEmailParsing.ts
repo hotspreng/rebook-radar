@@ -261,6 +261,59 @@ function parseFlights(body: string): ParsedFlight[] {
       arrivalTime: arr24,
     });
   }
+  if (flights.length > 0) return flights;
+
+  // Some American award receipts place "AA <n>" above the confirmation code,
+  // followed by date, origin/time, then destination/time. This alternate pass
+  // only runs when the standard middle-of-segment layout produced no flights.
+  for (let k = 0; k < flightIdx.length; k++) {
+    const at = flightIdx[k]!;
+    const end = Math.min(
+      k + 1 < flightIdx.length ? flightIdx[k + 1]! : lines.length,
+      at + 30,
+    );
+    const flightNumber = `AA ${lines[at]!.match(FLIGHT_NO_RE)![1]}`;
+    let date: string | undefined;
+    let origin: string | undefined;
+    let destination: string | undefined;
+    let departureTime: string | undefined;
+    let arrivalTime: string | undefined;
+
+    for (let i = at + 1; i < end; i++) {
+      const line = lines[i]!;
+      date ??= parseWeekdayDate(line);
+      if (!date) continue;
+      if (!origin && AIRPORT_CODE_RE.test(line)) {
+        origin = line;
+        continue;
+      }
+      if (origin && !departureTime && TIME_RE.test(line)) {
+        departureTime = line;
+        continue;
+      }
+      if (departureTime && !destination && AIRPORT_CODE_RE.test(line)) {
+        destination = line;
+        continue;
+      }
+      if (destination && !arrivalTime && TIME_RE.test(line)) {
+        arrivalTime = line;
+        break;
+      }
+    }
+
+    if (!date || !origin || !destination || !departureTime || !arrivalTime) continue;
+    const dep24 = to24(departureTime);
+    const arr24 = to24(arrivalTime);
+    if (!dep24 || !arr24) continue;
+    flights.push({
+      flightNumber,
+      origin,
+      destination,
+      date,
+      departureTime: dep24,
+      arrivalTime: arr24,
+    });
+  }
   return flights;
 }
 

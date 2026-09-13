@@ -124,6 +124,50 @@ test('parseAmericanEmail parses a real trip confirmation (route, date, fare, pas
   ]);
 });
 
+test('parseAmericanEmail parses an award receipt when the flight number precedes the itinerary', () => {
+  const body = `
+Issued: September 13, 2026
+Your trip confirmation and receipt
+AA 4102
+Operated by Envoy Air as American Eagle
+Confirmation code: HBLZAQ
+Wednesday, October 14, 2026
+ORD
+Chicago O'Hare
+6:40 AM
+DEN
+Denver
+8:33 AM
+Seat: 4D
+Class: Business (J)
+Your purchase
+Joshua Sprenger - AAdvantage #: 0U5****
+New ticket 25,500 miles
+Taxes & carrier-imposed fees $5.60
+Ticket #: 0012376940805
+Total cost $5.60 + 25,500 miles
+Your payment
+Visa (ending 4518) $5.60
+AAdvantage Miles (0U5****) 25,500
+Total paid $5.60 + 25,500 miles
+`;
+
+  const event = parseAmericanEmail(
+    msg({ subject: 'Your trip confirmation (ORD - DEN)', body }),
+  );
+  assert.ok(event?.trip, 'expected award confirmation to produce a trip');
+  assert.equal(event.confirmationNumber, 'HBLZAQ');
+  assert.equal(event.trip.origin, 'ORD');
+  assert.equal(event.trip.destination, 'DEN');
+  assert.equal(event.trip.departureDateTime, '2026-10-14T06:40:00');
+  assert.equal(event.trip.arrivalDateTime, '2026-10-14T08:33:00');
+  assert.equal(event.trip.cabin, Cabin.Business);
+  assert.equal(event.trip.purchaseType, PurchaseType.Points);
+  assert.equal(event.trip.paidPoints, 25_500);
+  assert.equal(event.trip.taxesAndFeesUsd, 5.6);
+  assert.deepEqual(event.trip.passengerNames, ['Joshua Sprenger']);
+});
+
 test('parseAmericanEmail splits a multi-direction reservation into tracked legs', () => {
   const body = `
 Your trip confirmation and receipt

@@ -17,7 +17,9 @@ function parseAirlineEmail(message: EmailMessage): ParsedTripEvent | undefined {
   if (isAirCanadaEmail(message.from)) return parseAirCanadaEmail(message);
   if (isUnitedEmail(message.from)) return parseUnitedEmail(message);
   if (isDeltaEmail(message.from)) return parseDeltaEmail(message);
-  if (isAmericanEmail(message.from)) return parseAmericanEmail(message);
+  if (isAmericanEmail(message.from) || isAmericanEmail(message.body)) {
+    return parseAmericanEmail(message);
+  }
   return parseSouthwestEmail(message);
 }
 
