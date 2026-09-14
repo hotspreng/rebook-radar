@@ -942,9 +942,8 @@ export class AppService {
         updatedAt: new Date().toISOString(),
       };
       await this.deps.flights.update(updated);
-      // Persist the quote/comparison so the current price shows right away too.
-      await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
-      await this.recordPriceHistory(flight.id, result.quote, result.comparison);
+      // This lookup values the original points booking only. A current quote,
+      // savings amount, and recommendation must wait for an explicit price sync.
       log.info('Captured actual booking price', {
         flightId: flight.id,
         confirmation: flight.confirmationNumber,

@@ -1,6 +1,6 @@
 {
   "name": "@swr/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Electron desktop shell for Rebook Radar.",
   "license": "MIT",
   "main": "./out/main/index.js",
