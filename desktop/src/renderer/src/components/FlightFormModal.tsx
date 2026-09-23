@@ -93,7 +93,11 @@ export function FlightFormModal({ passengers, existing, groupLegs, onClose, onSa
           origin: { code: origin.toUpperCase() },
           destination: { code: destination.toUpperCase() },
         },
-        departureDateTime: new Date(departure).toISOString(),
+        // Store the wall-clock date/time exactly as entered (local, no timezone
+        // shift), matching how imported trips and fare quotes represent times.
+        // Converting to UTC here pushed evening flights to the next calendar
+        // day, which then priced (and displayed) the wrong date.
+        departureDateTime: departure.length === 16 ? `${departure}:00` : departure,
         fareType,
         originalCost: {
           purchaseType,

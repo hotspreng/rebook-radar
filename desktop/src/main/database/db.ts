@@ -39,6 +39,63 @@ function runMigrations(database: Database): void {
   for (const m of MIGRATIONS) {
     if (!existing(m.table).has(m.column)) database.run(m.ddl);
   }
+  normalizeLegacyUtcTimestamps(database);
+}
+
+/**
+ * Convert a UTC ISO instant (e.g. "2026-12-14T02:25:00.000Z") to a naive
+ * local wall-clock string ("2026-12-13T20:25:00"). Used to repair manual
+ * flights saved by an older build that converted the entered local time to
+ * UTC, which shifted evening departures to the next calendar day.
+ */
+function utcToLocalNaive(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+    `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  );
+}
+
+/**
+ * One-time, idempotent repair of manual flights whose departure/arrival were
+ * stored as a UTC instant (suffix "Z") instead of a local wall-clock string.
+ * Imported trips and fare quotes are always naive-local, so any "Z" timestamp
+ * is a legacy manual entry. When the fix shifts the calendar date, the stored
+ * quote and price history were fetched for the wrong day, so they are cleared
+ * and repopulated on the next price check. Re-running finds no "Z" rows.
+ */
+function normalizeLegacyUtcTimestamps(database: Database): void {
+  const rows: { id: string; departure_dt: string; arrival_dt: string | null }[] = [];
+  const stmt = database.prepare(
+    "SELECT id, departure_dt, arrival_dt FROM flights WHERE departure_dt LIKE '%Z' OR arrival_dt LIKE '%Z'",
+  );
+  try {
+    while (stmt.step()) {
+      rows.push(
+        stmt.getAsObject() as { id: string; departure_dt: string; arrival_dt: string | null },
+      );
+    }
+  } finally {
+    stmt.free();
+  }
+
+  for (const r of rows) {
+    const newDep = r.departure_dt.endsWith('Z') ? utcToLocalNaive(r.departure_dt) : r.departure_dt;
+    const newArr =
+      r.arrival_dt && r.arrival_dt.endsWith('Z') ? utcToLocalNaive(r.arrival_dt) : r.arrival_dt ?? null;
+    database.run('UPDATE flights SET departure_dt = :dep, arrival_dt = :arr WHERE id = :id', {
+      ':dep': newDep,
+      ':arr': newArr,
+      ':id': r.id,
+    } as never);
+
+    if (newDep.slice(0, 10) !== r.departure_dt.slice(0, 10)) {
+      database.run('DELETE FROM quotes WHERE flight_id = :id', { ':id': r.id } as never);
+      database.run('DELETE FROM price_history WHERE flight_id = :id', { ':id': r.id } as never);
+    }
+  }
 }
 
 function getDbPath(): string {
