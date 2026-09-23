@@ -76,6 +76,48 @@ test('cash fare small drop below threshold recommends Keep', () => {
   assert.equal(result.savingsUsd, 10);
 });
 
+test('manual cash fare includes separately entered taxes in the original total', () => {
+  const flight = makeFlight({
+    originalCost: {
+      purchaseType: PurchaseType.Cash,
+      cashUsd: 376.74,
+      taxesAndFeesUsd: 43.66,
+    },
+  });
+  const quote = makeQuote({ cashUsd: 420 });
+  const result = service.compare(flight, quote, {
+    pointValueCents: 1.4,
+    savingsThresholdUsd: 25,
+    savingsThresholdPoints: 2000,
+    now: fixedNow,
+  });
+
+  assert.equal(result.originalAmount, 420.4);
+  assert.equal(result.originalValueUsd, 420.4);
+  assert.equal(result.savingsNative, 0.4);
+  assert.equal(result.savingsUsd, 0.4);
+});
+
+test('imported cash fare does not add itemized taxes to its all-in total', () => {
+  const flight = makeFlight({
+    source: FlightSource.Email,
+    originalCost: {
+      purchaseType: PurchaseType.Cash,
+      cashUsd: 420,
+      taxesAndFeesUsd: 43.26,
+    },
+  });
+  const result = service.compare(flight, makeQuote({ cashUsd: 420 }), {
+    pointValueCents: 1.4,
+    savingsThresholdUsd: 25,
+    savingsThresholdPoints: 2000,
+    now: fixedNow,
+  });
+
+  assert.equal(result.originalAmount, 420);
+  assert.equal(result.savingsNative, 0);
+});
+
 test('points fare drop above threshold recommends Rebook', () => {
   const flight = makeFlight({
     originalCost: { purchaseType: PurchaseType.Points, points: 12000, taxesAndFeesUsd: 5.6 },

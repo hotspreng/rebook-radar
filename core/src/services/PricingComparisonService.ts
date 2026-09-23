@@ -1,5 +1,6 @@
 import {
   Flight,
+  FlightSource,
   PriceComparison,
   PriceQuote,
   PurchaseType,
@@ -65,10 +66,16 @@ export class PricingComparisonService {
         : undefined;
     const effectiveCpp = bookingCpp ?? pointValueCents;
 
-    const originalAmount = isPoints ? originalPoints : original.cashUsd ?? 0;
+    // Manual entries store the base fare in cashUsd with taxes & fees captured
+    // separately, so the all-in original cost sums both. Email-imported trips
+    // already store the grand total in cashUsd, so taxes are not added again.
+    const originalCashAmount =
+      (original.cashUsd ?? 0) +
+      (flight.source === FlightSource.Manual ? original.taxesAndFeesUsd : 0);
+    const originalAmount = isPoints ? originalPoints : originalCashAmount;
     const originalValueUsd = isPoints
       ? pointsToUsd(originalPoints, effectiveCpp) + original.taxesAndFeesUsd
-      : (original.cashUsd ?? 0) + 0; // cash fare already includes taxes
+      : originalCashAmount;
 
     // No quote → we cannot recommend anything yet.
     if (!quote) {

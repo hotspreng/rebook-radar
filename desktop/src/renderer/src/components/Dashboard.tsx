@@ -48,7 +48,6 @@ export function Dashboard(): JSX.Element {
     checkOne,
     refreshFlights,
     pushToast,
-    settings,
   } = useAppStore();
 
   const [showForm, setShowForm] = useState(false);
@@ -159,9 +158,10 @@ export function Dashboard(): JSX.Element {
     return [{ value: 'all', label: 'All airlines' }, ...items];
   }, [flights]);
 
-  // Round trips are stored as separate legs sharing a confirmation number. Group
-  // them so the cost columns can show the booking's true combined totals (e.g.
-  // 42,000 pts) once, instead of a fabricated per-leg split.
+  // Round trips are stored as separate legs sharing a confirmation number.
+  // Keep the group only so one action can sync both legs and the realized-
+  // savings column can aggregate rebook events; prices and comparisons stay
+  // per-leg because each direction can have its own entered amount.
   const bookingGroups = useMemo(() => {
     const m = new Map<
       string,
@@ -169,15 +169,6 @@ export function Dashboard(): JSX.Element {
         count: number;
         firstLegId: string;
         legIds: string[];
-        points: number;
-        cashUsd: number;
-        valueUsd: number;
-        marketCashUsd: number;
-        marketCashCount: number;
-        currentAmount: number;
-        savingsNative: number;
-        quoted: number;
-        rebook: boolean;
       }
     >();
     for (const it of filtered) {
@@ -188,46 +179,13 @@ export function Dashboard(): JSX.Element {
           count: 0,
           firstLegId: it.flight.id,
           legIds: [],
-          points: 0,
-          cashUsd: 0,
-          valueUsd: 0,
-          marketCashUsd: 0,
-          marketCashCount: 0,
-          currentAmount: 0,
-          savingsNative: 0,
-          quoted: 0,
-          rebook: false,
         };
       g.count += 1;
       g.legIds.push(it.flight.id);
-      g.points += it.flight.originalCost.points ?? 0;
-      g.cashUsd += originalCashTotal(it.flight) ?? 0;
-      g.valueUsd += it.comparison?.originalValueUsd ?? 0;
-      if (it.flight.originalMarketCashUsd != null) {
-        g.marketCashUsd += it.flight.originalMarketCashUsd;
-        g.marketCashCount += 1;
-      }
-      if (it.comparison?.currentAmount != null) {
-        g.currentAmount += it.comparison.currentAmount;
-        g.savingsNative += it.comparison.savingsNative ?? 0;
-        g.quoted += 1;
-      }
-      if (it.comparison?.recommendation === Recommendation.Rebook) g.rebook = true;
       m.set(pnr, g);
     }
-    // Decide a round-trip recommendation from the COMBINED savings vs the alert
-    // threshold (per-leg flags mislead: one leg can clear or miss the bar while
-    // the booking total tells a different story). Only once every leg is priced.
-    for (const g of m.values()) {
-      if (g.count < 2 || g.quoted < g.count) continue;
-      const isPointsBooking = g.points > 0;
-      const threshold = isPointsBooking
-        ? settings?.savingsAlertThresholdPoints ?? 2000
-        : settings?.savingsAlertThresholdUsd ?? 25;
-      g.rebook = g.savingsNative >= threshold && g.savingsNative > 0;
-    }
     return m;
-  }, [filtered, settings]);
+  }, [filtered]);
 
   const stats = useMemo(() => {
     const rebook = filtered.filter((f) => f.comparison?.recommendation === Recommendation.Rebook);
@@ -490,122 +448,63 @@ export function Dashboard(): JSX.Element {
                         })()}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-300">
-                        {isRoundTrip ? (
-                          isFirstLeg ? (
-                            <>
-                              {formatNative(isPoints ? group!.points : group!.cashUsd, type)}
-                              <span className="mt-0.5 block text-[11px] text-slate-500">
-                                round trip · {group!.count} legs
-                              </span>
-                              {isPoints &&
-                              group!.marketCashCount > 0 &&
-                              group!.marketCashCount === group!.count ? (
-                                <span className="block text-[11px] text-slate-500">
-                                  {formatUsd(group!.marketCashUsd)}{' '}
-                                  <span className="text-emerald-500">actual</span>
-                                </span>
-                              ) : (
-                                isPoints &&
-                                group!.valueUsd > 0 && (
-                                  <span className="block text-[11px] text-slate-500">
-                                    ≈ {formatUsd(group!.valueUsd)} est.
-                                  </span>
-                                )
-                              )}
-                            </>
+                        <>
+                          {formatNative(
+                            isPoints ? item.flight.originalCost.points : originalCashTotal(item.flight),
+                            type,
+                          )}
+                          {isPoints && item.flight.originalMarketCashUsd != null ? (
+                            <span className="mt-0.5 block text-[11px] text-slate-500">
+                              {formatUsd(item.flight.originalMarketCashUsd)}{' '}
+                              <span className="text-emerald-500">actual</span>
+                            </span>
                           ) : (
-                            <span className="text-[11px] text-slate-500">↳ incl. in round trip</span>
-                          )
-                        ) : (
-                          <>
-                            {formatNative(
-                              isPoints ? item.flight.originalCost.points : originalCashTotal(item.flight),
-                              type,
-                            )}
-                            {isPoints && item.flight.originalMarketCashUsd != null ? (
+                            isPoints &&
+                            c?.originalValueUsd != null && (
                               <span className="mt-0.5 block text-[11px] text-slate-500">
-                                {formatUsd(item.flight.originalMarketCashUsd)}{' '}
-                                <span className="text-emerald-500">actual</span>
+                                ≈ {formatUsd(c.originalValueUsd)} est.
                               </span>
-                            ) : (
-                              isPoints &&
-                              c?.originalValueUsd != null && (
-                                <span className="mt-0.5 block text-[11px] text-slate-500">
-                                  ≈ {formatUsd(c.originalValueUsd)} est.
-                                </span>
-                              )
-                            )}
-                          </>
-                        )}
+                            )
+                          )}
+                        </>
                       </td>
                       <td className="px-4 py-3 text-right text-slate-300">
-                        {isRoundTrip ? (
-                          <>
-                            {currentAmount != null ? (
-                              <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
-                                {formatNative(currentAmount, type)}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                            {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
-                              <span className="ml-1 text-[10px] text-slate-500">est.</span>
-                            )}
-                            {isPoints && item.quote?.cashUsd != null && (
-                              <span className="mt-0.5 block text-[11px] text-slate-500">
-                                {formatUsd(item.quote.cashUsd)} cash
-                              </span>
-                            )}
-                            {group!.quoted === group!.count ? (
-                              <span
-                                className={`block text-[11px] ${group!.savingsNative < 0 ? 'text-rose-400' : 'text-slate-500'}`}
+                        <>
+                          {currentAmount != null ? (
+                            <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
+                              {formatNative(currentAmount, type)}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                          {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
+                            <span className="ml-1 text-[10px] text-slate-500">est.</span>
+                          )}
+                          {isPoints && item.quote?.cashUsd != null && (
+                            <span className="mt-0.5 block text-[11px] text-slate-500">
+                              {formatUsd(item.quote.cashUsd)} cash
+                            </span>
+                          )}
+                          {canExpand && (
+                            <div className="mt-1">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleExpanded(item.flight.id);
+                                }}
+                                className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/25"
+                                aria-expanded={isOpen}
+                                title={`Show ${cheaper.length} cheaper same-day option${cheaper.length > 1 ? 's' : ''}`}
                               >
-                                total {formatNative(group!.currentAmount, type)} · both legs
-                              </span>
-                            ) : (
-                              <span className="block text-[11px] text-slate-500">
-                                {group!.quoted}/{group!.count} legs priced
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            {currentAmount != null ? (
-                              <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
-                                {formatNative(currentAmount, type)}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                            {isPoints && item.quote?.pointsEstimated && currentAmount != null && (
-                              <span className="ml-1 text-[10px] text-slate-500">est.</span>
-                            )}
-                            {isPoints && item.quote?.cashUsd != null && (
-                              <span className="mt-0.5 block text-[11px] text-slate-500">
-                                {formatUsd(item.quote.cashUsd)} cash
-                              </span>
-                            )}
-                            {canExpand && (
-                              <div className="mt-1">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleExpanded(item.flight.id);
-                                  }}
-                                  className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 hover:bg-emerald-500/25"
-                                  aria-expanded={isOpen}
-                                  title={`Show ${cheaper.length} cheaper same-day option${cheaper.length > 1 ? 's' : ''}`}
-                                >
-                                  <ChevronRight
-                                    size={11}
-                                    className={`transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                                  />
-                                  {cheaper.length} cheaper
-                                </button>
-                              </div>
-                            )}
-                          </>
-                        )}
+                                <ChevronRight
+                                  size={11}
+                                  className={`transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                                />
+                                {cheaper.length} cheaper
+                              </button>
+                            </div>
+                          )}
+                        </>
                       </td>
                       <td
                         className={`px-4 py-3 text-right ${
@@ -616,33 +515,7 @@ export function Dashboard(): JSX.Element {
                               : 'text-slate-400'
                         }`}
                       >
-                        {isRoundTrip ? (
-                          isFirstLeg ? (
-                            group!.quoted === group!.count ? (
-                              <span
-                                className={`inline-flex items-center gap-1 ${
-                                  group!.savingsNative > 0
-                                    ? 'text-emerald-400'
-                                    : group!.savingsNative < 0
-                                      ? 'text-rose-400'
-                                      : 'text-slate-400'
-                                }`}
-                              >
-                                {group!.savingsNative > 0 && <TrendingDown size={13} />}
-                                {group!.savingsNative < 0 && <TrendingUp size={13} />}
-                                {group!.savingsNative < 0
-                                  ? `+${formatNative(-group!.savingsNative, type)}`
-                                  : formatNative(group!.savingsNative, type)}
-                              </span>
-                            ) : (
-                              <span className="text-[11px] text-slate-500">
-                                {group!.quoted}/{group!.count} legs priced
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-[11px] text-slate-500">↳ incl. in round trip</span>
-                          )
-                        ) : c?.savingsNative != null ? (
+                        {c?.savingsNative != null ? (
                           <span className="inline-flex items-center gap-1">
                             {savingsPositive && <TrendingDown size={13} />}
                             {savingsNegative && <TrendingUp size={13} />}
@@ -686,23 +559,7 @@ export function Dashboard(): JSX.Element {
                         })()}
                       </td>
                       <td className="px-4 py-3">
-                        {isRoundTrip ? (
-                          isFirstLeg ? (
-                            group!.quoted === group!.count ? (
-                              <RecommendationBadge
-                                value={group!.rebook ? Recommendation.Rebook : Recommendation.Keep}
-                              />
-                            ) : (
-                              <span className="text-[11px] text-slate-500">
-                                {group!.quoted}/{group!.count} legs priced
-                              </span>
-                            )
-                          ) : (
-                            <span className="text-[11px] text-slate-500">↳ round trip</span>
-                          )
-                        ) : (
-                          <RecommendationBadge value={c?.recommendation ?? Recommendation.Unknown} />
-                        )}
+                        <RecommendationBadge value={c?.recommendation ?? Recommendation.Unknown} />
                       </td>
                       <td className="px-4 py-3 text-right">
                         {isRoundTrip && !isFirstLeg ? (

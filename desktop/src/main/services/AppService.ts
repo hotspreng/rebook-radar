@@ -1478,7 +1478,9 @@ export class AppService {
     if (!comparison) {
       const latest = await this.deps.quotes.getLatest(flight.id);
       quote = quote ?? latest?.quote;
-      comparison = latest?.comparison;
+      comparison = quote
+        ? this.pricing.compare(flight, quote, this.comparisonOptions(flight.airline))
+        : latest?.comparison;
     }
     const priceHistory = await this.deps.priceHistory.list(flight.id);
     return {
