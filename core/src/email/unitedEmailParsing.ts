@@ -149,7 +149,7 @@ interface ParsedSegment {
  *   Chicago, IL, US (ORD) Syracuse, NY, US (SYR)
  */
 const SEGMENT_RE =
-  /Flight\s+\d+\s+of\s+\d+\s+UA\s*(\d+)[^\n]*\n\s*([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})\s+([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})\s*\n\s*(\d{1,2}:\d{2}\s*[AP]M)\s*-->\s*(\d{1,2}:\d{2}\s*[AP]M)\s*\n\s*([^()\n]+?)\s*\(([A-Z]{3})\)\s+([^()\n]+?)\s*\(([A-Z]{3})\)/gi;
+  /Flight\s+\d+\s+of\s+\d+\s+UA\s*(\d+)[^\n]*\n\s*([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})\s+([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})\s*\n\s*(\d{1,2}:\d{2}\s*[AP]M)\s*(?:-->)?\s*(\d{1,2}:\d{2}\s*[AP]M)\s*\n\s*([^()\n]+?)\s*\(([A-Z]{3})\)\s+([^()\n]+?)\s*\(([A-Z]{3})\)/gi;
 
 /**
  * Match a single flight block in a shared "Travel itinerary" email (sent from
