@@ -104,11 +104,33 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
+-- Pending "which leg did this credit apply to?" items. Created when a change
+-- confirmation redeposits points/cash without saying which leg of a multi-leg
+-- booking changed; resolved by the user on the Review queue.
+CREATE TABLE IF NOT EXISTS credit_reviews (
+  id TEXT PRIMARY KEY,
+  airline TEXT NOT NULL,
+  confirmation_number TEXT NOT NULL,
+  email_id TEXT NOT NULL,
+  email_date TEXT NOT NULL,
+  subject TEXT,
+  passenger_id TEXT,
+  passenger_name TEXT,
+  credited_points INTEGER,
+  credited_cash_usd REAL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  applied_flight_id TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_flights_passenger ON flights(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_flights_account ON flights(account_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_flight ON price_history(flight_id, recorded_at);
 CREATE INDEX IF NOT EXISTS idx_rebook_events_flight ON rebook_events(flight_id);
 CREATE INDEX IF NOT EXISTS idx_rebook_events_recorded ON rebook_events(recorded_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_reviews_email ON credit_reviews(email_id);
+CREATE INDEX IF NOT EXISTS idx_credit_reviews_status ON credit_reviews(status);
 `;
 
 /**

@@ -1,8 +1,8 @@
 import { RetrievedTrip } from '../providers/AirlineProvider.js';
 import { EmailMessage } from './EmailMessage.js';
-import { ParsedTripEvent, TripEventType } from './TripEvent.js';
+import { MileageCreditEvent, ParsedTripEvent, TripEventType } from './TripEvent.js';
 import { parseSouthwestEmail } from './southwestEmailParsing.js';
-import { isUnitedEmail, parseUnitedEmail } from './unitedEmailParsing.js';
+import { isUnitedEmail, parseUnitedEmail, parseUnitedMileageCredit } from './unitedEmailParsing.js';
 import { isDeltaEmail, parseDeltaEmail } from './deltaEmailParsing.js';
 import { isAmericanEmail, parseAmericanEmail } from './americanEmailParsing.js';
 import { isAirCanadaEmail, parseAirCanadaEmail } from './airCanadaEmailParsing.js';
@@ -23,6 +23,16 @@ function parseAirlineEmail(message: EmailMessage): ParsedTripEvent | undefined {
   return parseSouthwestEmail(message);
 }
 
+/**
+ * Parse a points/miles redeposit from a change-confirmation email, dispatching
+ * by sender. Only United currently emits an attributable mileage credit; other
+ * carriers return `undefined`.
+ */
+function parseAirlineCredit(message: EmailMessage): MileageCreditEvent | undefined {
+  if (isUnitedEmail(message.from)) return parseUnitedMileageCredit(message);
+  return undefined;
+}
+
 
 /** Result of folding a batch of airline emails into current trip state. */
 export interface EmailImportResult {
@@ -36,6 +46,12 @@ export interface EmailImportResult {
    * a NEW confirmation number against the cancelled trip to credit a saving.
    */
   cancelledTrips: RetrievedTrip[];
+  /**
+   * Points/miles redeposits parsed from change-confirmation emails. These are
+   * not folded into trips because the airline does not say which leg of a
+   * multi-leg booking was changed; the host surfaces them for manual review.
+   */
+  credits: MileageCreditEvent[];
   /** Total number of recognized Southwest events parsed. */
   events: number;
   /** Number of distinct confirmation numbers seen. */
@@ -86,9 +102,12 @@ export class EmailTripImportService {
     const includeUndated = options.includeUndatedTrips ?? true;
 
     const events: ParsedTripEvent[] = [];
+    const credits: MileageCreditEvent[] = [];
     for (const message of messages) {
       const event = parseAirlineEmail(message);
       if (event) events.push(event);
+      const credit = parseAirlineCredit(message);
+      if (credit) credits.push(credit);
     }
 
     // Oldest first so newer events override older ones during the fold.
@@ -158,6 +177,7 @@ export class EmailTripImportService {
       active,
       cancelledConfirmations,
       cancelledTrips,
+      credits,
       events: events.length,
       confirmations: byConfirmation.size,
     };

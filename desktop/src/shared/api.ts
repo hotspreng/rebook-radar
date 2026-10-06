@@ -10,6 +10,7 @@ import type {
   AlertEvent,
   AppSettings,
   CreateAccountInput,
+  CreditReviewView,
   EmailImportProgress,
   PriceCheckProgress,
   EmailImportResult,
@@ -89,6 +90,11 @@ export interface SwrApi {
   reporting: {
     savings(): Promise<SavingsReport>;
     priceTrends(): Promise<PriceTrends>;
+  };
+  review: {
+    list(): Promise<CreditReviewView[]>;
+    apply(itemId: string, flightId: string): Promise<void>;
+    dismiss(itemId: string): Promise<void>;
   };
   exportCsv(): Promise<{ saved: boolean; path?: string }>;
   openExternal(url: string): Promise<void>;

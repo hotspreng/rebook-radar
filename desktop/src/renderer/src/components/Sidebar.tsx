@@ -1,21 +1,24 @@
-import { LayoutDashboard, Settings, Plane, BarChart3, TrendingUp, History } from 'lucide-react';
+import { LayoutDashboard, Settings, Plane, BarChart3, TrendingUp, History, ClipboardCheck } from 'lucide-react';
 
-export type Route = 'dashboard' | 'past' | 'reporting' | 'trends' | 'settings';
+export type Route = 'dashboard' | 'past' | 'reporting' | 'trends' | 'review' | 'settings';
 
 const items: { id: Route; label: string; icon: JSX.Element }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
   { id: 'past', label: 'Past Flights', icon: <History size={18} /> },
   { id: 'reporting', label: 'Reporting', icon: <BarChart3 size={18} /> },
   { id: 'trends', label: 'Trends', icon: <TrendingUp size={18} /> },
+  { id: 'review', label: 'Review', icon: <ClipboardCheck size={18} /> },
   { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
 ];
 
 export function Sidebar({
   route,
   onNavigate,
+  reviewCount = 0,
 }: {
   route: Route;
   onNavigate: (route: Route) => void;
+  reviewCount?: number;
 }): JSX.Element {
   return (
     <aside className="flex w-60 flex-col border-r border-slate-800 bg-slate-950/80">
@@ -40,7 +43,12 @@ export function Sidebar({
             }`}
           >
             {item.icon}
-            {item.label}
+            <span className="flex-1 text-left">{item.label}</span>
+            {item.id === 'review' && reviewCount > 0 && (
+              <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[11px] font-semibold text-amber-300">
+                {reviewCount}
+              </span>
+            )}
           </button>
         ))}
       </nav>

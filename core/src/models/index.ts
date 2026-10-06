@@ -6,3 +6,4 @@ export * from './PriceQuote.js';
 export * from './PriceComparison.js';
 export * from './PriceHistory.js';
 export * from './RebookEvent.js';
+export * from './CreditReview.js';

@@ -6,7 +6,7 @@ import {
   RetrievedTripLeg,
 } from '../providers/AirlineProvider.js';
 import { EmailMessage } from './EmailMessage.js';
-import { ParsedTripEvent, TripEventType } from './TripEvent.js';
+import { MileageCreditEvent, ParsedTripEvent, TripEventType } from './TripEvent.js';
 
 /**
  * Pure, framework-agnostic parsing for United Airlines confirmation emails.
@@ -127,6 +127,75 @@ export function parseUnitedEmail(message: EmailMessage): ParsedTripEvent | undef
   // for the same PNR wins the fold.
   if (!trip) return undefined;
   return { ...base, trip };
+}
+
+/**
+ * Parse a United voluntary-change confirmation that redeposited points or cash
+ * ("New purchase summary → Redeposit 12,400 miles"). These `notifications@`
+ * emails have no per-passenger award pricing and do not say WHICH leg of a
+ * multi-leg booking was changed, so they are surfaced as a {@link
+ * MileageCreditEvent} for the user to attribute by hand — never folded into the
+ * itinerary (that would overwrite the richer eTicket receipt).
+ *
+ * Returns `undefined` for any United email that carries no redeposit amount.
+ */
+export function parseUnitedMileageCredit(
+  message: EmailMessage,
+): MileageCreditEvent | undefined {
+  if (!isUnitedEmail(message.from)) return undefined;
+  const body = message.body ?? '';
+
+  const milesMatch = body.match(/Redeposit\s*([\d,]+)\s*miles/i);
+  const cashMatch = body.match(/Redeposit\s*(?:&#36;|\$)\s*([\d,]+(?:\.\d{2})?)/i);
+  const creditedPoints = milesMatch
+    ? Number.parseInt(milesMatch[1]!.replace(/,/g, ''), 10)
+    : undefined;
+  const creditedCashUsd = cashMatch
+    ? Number.parseFloat(cashMatch[1]!.replace(/,/g, ''))
+    : undefined;
+  // Nothing was actually credited → not a mileage-credit email.
+  if (!(creditedPoints && creditedPoints > 0) && !(creditedCashUsd && creditedCashUsd > 0)) {
+    return undefined;
+  }
+
+  const confirmationNumber =
+    parsePnrFromSubject(message.subject ?? '') ?? parsePnrFromBody(body);
+  if (!confirmationNumber) return undefined;
+
+  return {
+    airline: Airline.United,
+    confirmationNumber,
+    emailId: message.id,
+    occurredAt: message.internalDate,
+    subject: message.subject ?? undefined,
+    passengerName: parseUnitedCreditTravelerName(body),
+    creditedPoints: creditedPoints && creditedPoints > 0 ? creditedPoints : undefined,
+    creditedCashUsd: creditedCashUsd && creditedCashUsd > 0 ? creditedCashUsd : undefined,
+  };
+}
+
+/**
+ * Best-effort traveler name for a change-confirmation's display. Tries the
+ * standard traveler blocks, then the "Travelers\nFirst Last" header United uses
+ * on these emails, then the MileagePlus account owner line. Purely cosmetic —
+ * the importer resolves the real passenger from the PNR's tracked flights.
+ */
+function parseUnitedCreditTravelerName(body: string): string | undefined {
+  const travelers = parseUnitedTravelers(body);
+  if (travelers.length > 0) return travelers[0];
+
+  const header = body.match(/Travelers\s*\n\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/);
+  if (header) return header[1]!.trim();
+
+  const account = body.match(/MileagePlus miles:\s*\(([A-Za-z]+(?:\s+[A-Za-z]+)*)\s*\*+/i);
+  if (account) {
+    return account[1]!
+      .trim()
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  }
+  return undefined;
 }
 
 /** One operated segment parsed from a receipt. */

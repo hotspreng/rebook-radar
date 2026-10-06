@@ -5,6 +5,7 @@ import { PriceComparison } from '../models/PriceComparison.js';
 import { PriceQuote } from '../models/PriceQuote.js';
 import { PriceHistoryEntry } from '../models/PriceHistory.js';
 import { RebookEvent } from '../models/RebookEvent.js';
+import { CreditReviewItem } from '../models/CreditReview.js';
 
 /**
  * Persistence "ports" (hexagonal architecture). Core defines WHAT it needs from
@@ -71,6 +72,27 @@ export interface RebookEventRepository {
   listByFlight(flightId: string): Promise<RebookEvent[]>;
   /** Remove all rebooking events for a flight (used when the flight is deleted). */
   deleteForFlight(flightId: string): Promise<void>;
+}
+
+/**
+ * Pending credit-review items (see {@link CreditReviewItem}). The desktop layer
+ * backs this with SQLite; core only ever sees this port.
+ */
+export interface CreditReviewRepository {
+  /** Insert a new review item. */
+  append(item: CreditReviewItem): Promise<void>;
+  /** All items, newest first. */
+  list(): Promise<CreditReviewItem[]>;
+  /** Items still awaiting a decision, newest first. */
+  listPending(): Promise<CreditReviewItem[]>;
+  /** One item by id. */
+  get(id: string): Promise<CreditReviewItem | undefined>;
+  /** One item by source email id (the dedupe key), any status. */
+  getByEmailId(emailId: string): Promise<CreditReviewItem | undefined>;
+  /** Persist a status/resolution change. */
+  update(item: CreditReviewItem): Promise<void>;
+  /** Remove an item. */
+  delete(id: string): Promise<void>;
 }
 
 /**

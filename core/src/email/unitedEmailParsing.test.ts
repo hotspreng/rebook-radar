@@ -6,6 +6,7 @@ import {
   classifyUnitedEmail,
   isUnitedEmail,
   parseUnitedEmail,
+  parseUnitedMileageCredit,
 } from './index.js';
 import type { EmailMessage } from './index.js';
 
@@ -250,4 +251,67 @@ test('parseUnitedEmail returns a cancellation event without trip details', () =>
   assert.equal(event!.type, TripEventType.Cancelled);
   assert.equal(event!.confirmationNumber, 'P0B0FE');
   assert.equal(event!.trip, undefined);
+});
+
+// Real voluntary-change confirmation shape (notifications@united.com) that
+// redeposited miles for the return leg of a round trip.
+const CHANGE_CREDIT_BODY = `
+ Thanks JOSHUA for choosing United!
+ United confirmation number : F18508
+ New purchase summary
+ Taxes and fees difference $0.00
+ Change fee No fee
+ Total 0 miles + $0.00
+ Redeposit 12,400 miles
+ MileagePlus miles: (JACKSON SPRENGER *****573)
+ Flight to Vail/Eagle
+ Mar 02, 2027
+`;
+
+test('parseUnitedMileageCredit extracts a miles redeposit from a change confirmation', () => {
+  const credit = parseUnitedMileageCredit(
+    msg({
+      from: 'United Airlines <notifications@united.com>',
+      subject: 'Your United Airlines booking confirmation – F18508',
+      body: CHANGE_CREDIT_BODY,
+      internalDate: Date.parse('2026-10-02T05:40:00Z'),
+    }),
+  );
+  assert.ok(credit);
+  assert.equal(credit!.airline, Airline.United);
+  assert.equal(credit!.confirmationNumber, 'F18508');
+  assert.equal(credit!.creditedPoints, 12400);
+  assert.equal(credit!.creditedCashUsd, undefined);
+  assert.equal(credit!.passengerName, 'Jackson Sprenger');
+  assert.equal(credit!.occurredAt, Date.parse('2026-10-02T05:40:00Z'));
+});
+
+test('parseUnitedMileageCredit extracts a cash redeposit', () => {
+  const credit = parseUnitedMileageCredit(
+    msg({
+      from: 'United Airlines <notifications@united.com>',
+      subject: 'Your United Airlines booking confirmation – P0B0FE',
+      body: 'New purchase summary\nChange fee No fee\nRedeposit $45.30\n',
+    }),
+  );
+  assert.ok(credit);
+  assert.equal(credit!.confirmationNumber, 'P0B0FE');
+  assert.equal(credit!.creditedCashUsd, 45.3);
+  assert.equal(credit!.creditedPoints, undefined);
+});
+
+test('parseUnitedMileageCredit ignores United emails with no redeposit', () => {
+  assert.equal(
+    parseUnitedMileageCredit(msg({ subject: 'eTicket Itinerary and Receipt for Confirmation P0B0FE', body: CASH_RECEIPT })),
+    undefined,
+  );
+});
+
+test('parseUnitedMileageCredit ignores non-United senders', () => {
+  assert.equal(
+    parseUnitedMileageCredit(
+      msg({ from: 'Delta <no-reply@delta.com>', body: 'Redeposit 12,400 miles' }),
+    ),
+    undefined,
+  );
 });

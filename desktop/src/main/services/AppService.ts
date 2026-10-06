@@ -36,11 +36,14 @@ import {
   type QuoteRepository,
   type RebookEvent,
   type RebookEventRepository,
+  type CreditReviewItem,
+  type CreditReviewRepository,
+  type MileageCreditEvent,
   type RetrievedTrip,
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
 import type { SettingsStore } from './SettingsStore.js';
@@ -169,6 +172,7 @@ export interface AppServiceDeps {
   quotes: QuoteRepository;
   priceHistory: PriceHistoryRepository;
   rebookEvents: RebookEventRepository;
+  creditReviews: CreditReviewRepository;
   secrets: SecretStore;
   /** Directory where debug artifacts (raw email/page dumps) are written. */
   debugDir: string;
@@ -558,15 +562,156 @@ export class AppService {
       }
     }
 
+    const creditsQueued = await this.queueCreditReviews(folded.credits, byConfirmation);
+
     this.deps.settings.update({ lastEmailImportAt: new Date().toISOString() });
-    log.info('Email import complete', { imported, updated, cancelled, skipped });
+    log.info('Email import complete', { imported, updated, cancelled, skipped, creditsQueued });
     this.deps.onEmailProgress?.({
       phase: 'done',
       scanned: messages.length,
       total: messages.length,
       tripsFound: folded.active.length,
     });
-    return { scanned: messages.length, imported, updated, cancelled, skipped };
+    return { scanned: messages.length, imported, updated, cancelled, skipped, creditsQueued };
+  }
+
+  /**
+   * Turn parsed mileage/cash redeposits into pending review items. A credit is
+   * queued only when its confirmation number matches currently-tracked flights
+   * (otherwise there is nothing to apply it to) and has not been queued before
+   * (deduped by source email id, so re-imports are idempotent).
+   */
+  private async queueCreditReviews(
+    credits: MileageCreditEvent[],
+    byConfirmation: Map<string, Flight[]>,
+  ): Promise<number> {
+    let queued = 0;
+    for (const credit of credits) {
+      const legs = byConfirmation.get(credit.confirmationNumber.toUpperCase()) ?? [];
+      if (legs.length === 0) continue;
+      if (await this.deps.creditReviews.getByEmailId(credit.emailId)) continue;
+
+      const item: CreditReviewItem = {
+        id: generateId('crv'),
+        airline: credit.airline,
+        confirmationNumber: credit.confirmationNumber,
+        emailId: credit.emailId,
+        emailDate: new Date(credit.occurredAt).toISOString(),
+        subject: credit.subject,
+        passengerId: legs[0]!.passengerId,
+        passengerName: credit.passengerName,
+        creditedPoints: credit.creditedPoints,
+        creditedCashUsd: credit.creditedCashUsd,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
+      await this.deps.creditReviews.append(item);
+      queued += 1;
+      log.info('Queued credit review', {
+        confirmation: credit.confirmationNumber,
+        creditedPoints: credit.creditedPoints,
+        creditedCashUsd: credit.creditedCashUsd,
+      });
+    }
+    return queued;
+  }
+
+  // --- Credit reviews ------------------------------------------------------
+
+  /**
+   * Pending credit reviews, each with the candidate legs (flights sharing the
+   * confirmation number) the user can attribute the credit to.
+   */
+  async listCreditReviews(): Promise<CreditReviewView[]> {
+    const items = await this.deps.creditReviews.listPending();
+    const flights = await this.deps.flights.list();
+    const passengers = await this.deps.passengers.list();
+    const nameById = new Map(passengers.map((p) => [p.id, p.fullName]));
+
+    return items.map((item) => {
+      const candidates = flights
+        .filter((f) => f.confirmationNumber.toUpperCase() === item.confirmationNumber.toUpperCase())
+        .sort((a, b) => a.departureDateTime.localeCompare(b.departureDateTime))
+        .map((f) => ({
+          flightId: f.id,
+          routeLabel: `${f.route.origin.code} → ${f.route.destination.code}`,
+          departureDateTime: f.departureDateTime,
+          purchaseType: f.originalCost.purchaseType,
+          currentAmount:
+            f.originalCost.purchaseType === PurchaseType.Points
+              ? f.originalCost.points
+              : f.originalCost.cashUsd,
+        }));
+      return {
+        ...item,
+        passengerName: item.passengerName ?? (item.passengerId ? nameById.get(item.passengerId) : undefined),
+        candidates,
+      };
+    });
+  }
+
+  /**
+   * Apply a queued credit to the chosen leg: record a realized saving equal to
+   * the redeposited amount (reducing that leg's effective paid amount) and mark
+   * the review resolved.
+   */
+  async applyCreditReview(itemId: string, flightId: string): Promise<void> {
+    const item = await this.deps.creditReviews.get(itemId);
+    if (!item) throw new Error(`Credit review ${itemId} not found.`);
+    if (item.status !== 'pending') throw new Error('This credit has already been resolved.');
+    const flight = await this.deps.flights.get(flightId);
+    if (!flight) throw new Error(`Flight ${flightId} not found.`);
+
+    const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
+    const credited = isPoints ? item.creditedPoints : item.creditedCashUsd;
+    if (credited == null || credited <= 0) {
+      throw new Error('This credit has no amount matching the chosen flight’s currency.');
+    }
+    const originalAmount = (isPoints ? flight.originalCost.points : flight.originalCost.cashUsd) ?? 0;
+    const newAmount = Math.max(0, originalAmount - credited);
+
+    const pointValueCents = this.pointValueCentsFor(flight.airline);
+    const event: RebookEvent = {
+      id: generateId('rbk'),
+      flightId: flight.id,
+      passengerId: flight.passengerId,
+      confirmationNumber: flight.confirmationNumber,
+      routeLabel: `${flight.route.origin.code} → ${flight.route.destination.code}`,
+      departureDate: flight.departureDateTime.slice(0, 10),
+      purchaseType: flight.originalCost.purchaseType,
+      originalAmount,
+      newAmount,
+      pointsSaved: isPoints ? credited : undefined,
+      cashSavedUsd: isPoints ? undefined : credited,
+      estimatedValueUsd: isPoints ? (credited * pointValueCents) / 100 : credited,
+      pointValueCents,
+      recordedAt: new Date().toISOString(),
+    };
+    await this.deps.rebookEvents.append(event);
+
+    await this.deps.creditReviews.update({
+      ...item,
+      status: 'applied',
+      appliedFlightId: flight.id,
+      resolvedAt: new Date().toISOString(),
+    });
+    log.info('Applied credit review', {
+      itemId,
+      flightId,
+      credited,
+      purchaseType: flight.originalCost.purchaseType,
+    });
+  }
+
+  /** Dismiss a queued credit without recording a saving. */
+  async dismissCreditReview(itemId: string): Promise<void> {
+    const item = await this.deps.creditReviews.get(itemId);
+    if (!item) throw new Error(`Credit review ${itemId} not found.`);
+    await this.deps.creditReviews.update({
+      ...item,
+      status: 'dismissed',
+      resolvedAt: new Date().toISOString(),
+    });
   }
 
   private async buildEmailSource(withRefreshToken: boolean): Promise<GmailMessageSource | null> {

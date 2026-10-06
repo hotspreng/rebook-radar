@@ -91,6 +91,8 @@ export interface EmailImportResult {
   cancelled: number;
   /** Active trips skipped (e.g. no matching passenger). */
   skipped: number;
+  /** Mileage/cash credits queued for manual leg attribution. */
+  creditsQueued: number;
 }
 
 /** Live progress emitted while an email import is running. */
@@ -156,6 +158,38 @@ export interface RebookEventView {
   cashSavedUsd?: number;
   estimatedValueUsd: number;
   recordedAt: string;
+}
+
+/** One candidate leg a queued credit can be attributed to. */
+export interface CreditReviewCandidate {
+  flightId: string;
+  routeLabel: string;
+  departureDateTime: string;
+  purchaseType: PurchaseType;
+  /** The leg's currently tracked amount (points or cash), when known. */
+  currentAmount?: number;
+}
+
+/**
+ * A pending credit awaiting the user's choice of which leg it applied to,
+ * enriched with the candidate legs for that confirmation number.
+ */
+export interface CreditReviewView {
+  id: string;
+  airline: Airline;
+  confirmationNumber: string;
+  emailId: string;
+  emailDate: string;
+  subject?: string;
+  passengerId?: string;
+  passengerName?: string;
+  creditedPoints?: number;
+  creditedCashUsd?: number;
+  status: 'pending' | 'applied' | 'dismissed';
+  appliedFlightId?: string;
+  createdAt: string;
+  resolvedAt?: string;
+  candidates: CreditReviewCandidate[];
 }
 
 /** Full savings report shown on the Reporting blade. */

@@ -5,6 +5,7 @@ import type {
   AlertEvent,
   AppSettings,
   CreateAccountInput,
+  CreditReviewView,
   EmailImportProgress,
   PriceCheckProgress,
   EmailImportResult,
@@ -90,6 +91,12 @@ const api: SwrApi = {
   reporting: {
     savings: () => invoke<SavingsReport>(IPC.reportSavings),
     priceTrends: () => invoke<PriceTrends>(IPC.reportTrends),
+  },
+  review: {
+    list: () => invoke<CreditReviewView[]>(IPC.reviewList),
+    apply: (itemId: string, flightId: string) =>
+      invoke<void>(IPC.reviewApply, { itemId, flightId }),
+    dismiss: (itemId: string) => invoke<void>(IPC.reviewDismiss, itemId),
   },
   exportCsv: () => invoke<{ saved: boolean; path?: string }>(IPC.exportCsv),
   openExternal: (url: string) => invoke<void>(IPC.openExternal, url),

@@ -99,6 +99,13 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
   // Reporting
   handle(IPC.reportSavings, () => service.getSavingsReport());
   handle(IPC.reportTrends, () => service.getPriceTrends());
+
+  // Credit review queue
+  handle(IPC.reviewList, () => service.listCreditReviews());
+  handle<{ itemId: string; flightId: string }>(IPC.reviewApply, ({ itemId, flightId }) =>
+    service.applyCreditReview(itemId, flightId),
+  );
+  handle<string>(IPC.reviewDismiss, (itemId) => service.dismissCreditReview(itemId));
   // System
   handle<string>(IPC.openExternal, (url) => shell.openExternal(url));
 

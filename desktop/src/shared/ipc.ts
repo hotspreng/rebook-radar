@@ -54,6 +54,11 @@ export const IPC = {
   reportSavings: 'report:savings',
   reportTrends: 'report:trends',
 
+  // Credit review queue
+  reviewList: 'review:list',
+  reviewApply: 'review:apply',
+  reviewDismiss: 'review:dismiss',
+
   // System
   openExternal: 'system:openExternal',
 
