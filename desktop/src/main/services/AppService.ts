@@ -689,6 +689,18 @@ export class AppService {
     };
     await this.deps.rebookEvents.append(event);
 
+    // Refresh the stored comparison so the new effective holding is reflected
+    // immediately (and the monitor won't re-flag an already-captured saving).
+    const latest = await this.deps.quotes.getLatest(flight.id);
+    if (latest?.quote) {
+      const comparison = await this.effectiveCompare(
+        flight,
+        latest.quote,
+        this.comparisonOptions(flight.airline),
+      );
+      await this.deps.quotes.saveLatest(flight.id, latest.quote, comparison);
+    }
+
     await this.deps.creditReviews.update({
       ...item,
       status: 'applied',
@@ -1139,9 +1151,10 @@ export class AppService {
     const provider = this.createProvider(flight.airline, this.fareSearchAirlineName(flight));
     const options = this.comparisonOptions(flight.airline);
     const result = await this.priceCheck.check(flight, provider, undefined, options);
-    await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
-    await this.recordPriceHistory(flight.id, result.quote, result.comparison);
-    return this.toFlightWithComparison(flight, result.quote, result.comparison);
+    const comparison = await this.effectiveCompare(flight, result.quote, options);
+    await this.deps.quotes.saveLatest(flight.id, result.quote, comparison);
+    await this.recordPriceHistory(flight.id, result.quote, comparison);
+    return this.toFlightWithComparison(flight, result.quote, comparison);
   }
 
   async checkAll(): Promise<FlightWithComparison[]> {
@@ -1158,10 +1171,11 @@ export class AppService {
         const provider = this.createProvider(flight.airline, this.fareSearchAirlineName(flight));
         const options = this.comparisonOptions(flight.airline);
         const result = await this.priceCheck.check(flight, provider, undefined, options);
-        await this.deps.quotes.saveLatest(flight.id, result.quote, result.comparison);
-        await this.recordPriceHistory(flight.id, result.quote, result.comparison);
-        if (result.comparison?.recommendation === Recommendation.Rebook) rebookFound += 1;
-        out.push(await this.toFlightWithComparison(flight, result.quote, result.comparison));
+        const comparison = await this.effectiveCompare(flight, result.quote, options);
+        await this.deps.quotes.saveLatest(flight.id, result.quote, comparison);
+        await this.recordPriceHistory(flight.id, result.quote, comparison);
+        if (comparison?.recommendation === Recommendation.Rebook) rebookFound += 1;
+        out.push(await this.toFlightWithComparison(flight, result.quote, comparison));
       } catch (err) {
         log.warn('Price check failed for flight', { flightId: flight.id, error: String(err) });
         out.push(await this.toFlightWithComparison(flight));
@@ -1206,7 +1220,7 @@ export class AppService {
             : alt,
         ),
       };
-      const comparison = this.pricing.compare(flight, reEstimated, options);
+      const comparison = await this.effectiveCompare(flight, reEstimated, options);
       await this.deps.quotes.saveLatest(flight.id, reEstimated, comparison);
       out.push(await this.toFlightWithComparison(flight, reEstimated, comparison));
       recomputed += 1;
@@ -1611,6 +1625,37 @@ export class AppService {
     return { username: account.username, password };
   }
 
+  /**
+   * The leg's effective current holding — what the traveler now effectively
+   * holds after any realized rebookings/credits, in native units. Equals the
+   * lowest of the booked amount and every recorded rebooking's new amount (a
+   * credit applied on the Review queue records such an event). Used as the
+   * comparison baseline so the dashboard measures "could I save by rebooking
+   * now?" against what is actually held, not the lifetime-original price.
+   */
+  private async effectiveHolding(flight: Flight): Promise<{ amount: number; adjusted: boolean }> {
+    const isPoints = flight.originalCost.purchaseType === PurchaseType.Points;
+    const base = (isPoints ? flight.originalCost.points : flight.originalCost.cashUsd) ?? 0;
+    const events = await this.deps.rebookEvents.listByFlight(flight.id);
+    const lowest = events.length ? Math.min(base, ...events.map((e) => e.newAmount)) : base;
+    return { amount: lowest < base ? lowest : base, adjusted: lowest < base };
+  }
+
+  /**
+   * Compare against the leg's effective holding rather than its raw booked cost.
+   * Only the baseline is overridden — the booking's redemption rate (used to
+   * estimate the current points price) is left intact.
+   */
+  private async effectiveCompare(
+    flight: Flight,
+    quote: FlightWithComparison['quote'],
+    options: PriceCheckOptions,
+  ): Promise<PriceComparison> {
+    const { amount, adjusted } = await this.effectiveHolding(flight);
+    const opts = adjusted ? { ...options, baselineHoldingNative: amount } : options;
+    return this.pricing.compare(flight, quote, opts);
+  }
+
   private async toFlightWithComparison(
     flight: Flight,
     quoteOverride?: FlightWithComparison['quote'],
@@ -1624,9 +1669,10 @@ export class AppService {
       const latest = await this.deps.quotes.getLatest(flight.id);
       quote = quote ?? latest?.quote;
       comparison = quote
-        ? this.pricing.compare(flight, quote, this.comparisonOptions(flight.airline))
+        ? await this.effectiveCompare(flight, quote, this.comparisonOptions(flight.airline))
         : latest?.comparison;
     }
+    const { amount: holding, adjusted } = await this.effectiveHolding(flight);
     const priceHistory = await this.deps.priceHistory.list(flight.id);
     return {
       flight,
@@ -1635,6 +1681,7 @@ export class AppService {
       quote,
       comparison,
       priceHistory,
+      effectiveOriginalAmount: adjusted ? holding : undefined,
     };
   }
 

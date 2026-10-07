@@ -201,6 +201,39 @@ test('points fare values the booking at the price paid, not the settings cpp', (
   assert.equal(result.recommendation, Recommendation.Keep);
 });
 
+test('baseline holding override measures savings against the effective holding, not the booked points', () => {
+  // Booked 26,900 pts (seat's real cash fare $334 at booking). A credit left an
+  // effective holding of 14,500 pts. The current cash fare implies a higher
+  // points price now, so rebooking would be WORSE → Keep, no phantom savings.
+  const flight = makeFlight({
+    source: FlightSource.Email,
+    originalCost: { purchaseType: PurchaseType.Points, points: 26900, taxesAndFeesUsd: 6 },
+    originalMarketCashUsd: 334,
+  });
+  const quote = makeQuote({ cashUsd: 291, points: 26900, pointsEstimated: true });
+
+  const raw = service.compare(flight, quote, {
+    pointValueCents: 1.35,
+    savingsThresholdUsd: 25,
+    savingsThresholdPoints: 2000,
+    now: fixedNow,
+  });
+  const eff = service.compare(flight, quote, {
+    pointValueCents: 1.35,
+    savingsThresholdUsd: 25,
+    savingsThresholdPoints: 2000,
+    baselineHoldingNative: 14500,
+    now: fixedNow,
+  });
+
+  // The current estimate is unchanged — the override never touches the seat's
+  // booked redemption rate used to price it.
+  assert.equal(eff.currentAmount, raw.currentAmount);
+  assert.equal(eff.originalAmount, 14500);
+  assert.ok(eff.savingsNative != null && eff.savingsNative < 0);
+  assert.equal(eff.recommendation, Recommendation.Keep);
+});
+
 test('missing quote yields Unknown recommendation', () => {
   const flight = makeFlight();
   const result = service.compare(flight, undefined, {

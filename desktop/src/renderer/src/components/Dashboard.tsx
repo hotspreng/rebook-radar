@@ -450,10 +450,22 @@ export function Dashboard(): JSX.Element {
                       <td className="px-4 py-3 text-right text-slate-300">
                         <>
                           {formatNative(
-                            isPoints ? item.flight.originalCost.points : originalCashTotal(item.flight),
+                            item.effectiveOriginalAmount ??
+                              (isPoints ? item.flight.originalCost.points : originalCashTotal(item.flight)),
                             type,
                           )}
-                          {isPoints && item.flight.originalMarketCashUsd != null ? (
+                          {item.effectiveOriginalAmount != null ? (
+                            <span className="mt-0.5 block text-[11px] text-slate-500">
+                              was{' '}
+                              {formatNative(
+                                isPoints
+                                  ? item.flight.originalCost.points
+                                  : originalCashTotal(item.flight),
+                                type,
+                              )}{' '}
+                              <span className="text-emerald-500">· credit applied</span>
+                            </span>
+                          ) : isPoints && item.flight.originalMarketCashUsd != null ? (
                             <span className="mt-0.5 block text-[11px] text-slate-500">
                               {formatUsd(item.flight.originalMarketCashUsd)}{' '}
                               <span className="text-emerald-500">actual</span>

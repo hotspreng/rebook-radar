@@ -271,6 +271,12 @@ export interface FlightWithComparison {
   comparison?: PriceComparison;
   /** Recorded price observations over time, oldest first. */
   priceHistory?: PriceHistoryEntry[];
+  /**
+   * The leg's effective current holding (native units) when it is lower than
+   * the raw booked cost because a credit/rebooking was realized. The dashboard
+   * shows this as the "Original" amount; absent when nothing was realized.
+   */
+  effectiveOriginalAmount?: number;
 }
 
 /**

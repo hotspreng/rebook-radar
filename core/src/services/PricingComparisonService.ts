@@ -15,6 +15,14 @@ export interface ComparisonOptions {
   savingsThresholdUsd: number;
   /** Minimum points savings to recommend rebooking a points fare. */
   savingsThresholdPoints: number;
+  /**
+   * Override the baseline the current price is compared against (native units:
+   * points or USD). Defaults to the flight's booked cost. Set this to the leg's
+   * effective current holding after a realized credit/rebooking, so savings are
+   * measured against what is actually held — WITHOUT changing the booking's
+   * redemption rate used to estimate the current points price.
+   */
+  baselineHoldingNative?: number;
   /** Clock injection for testability. */
   now?: () => Date;
 }
@@ -72,10 +80,15 @@ export class PricingComparisonService {
     const originalCashAmount =
       (original.cashUsd ?? 0) +
       (flight.source === FlightSource.Manual ? original.taxesAndFeesUsd : 0);
-    const originalAmount = isPoints ? originalPoints : originalCashAmount;
+    // The baseline the current price is measured against. Defaults to the booked
+    // cost; an effective-holding override (post credit/rebooking) replaces only
+    // this baseline, never the redemption rate used above to price the seat now.
+    const bookedAmount = isPoints ? originalPoints : originalCashAmount;
+    const originalAmount =
+      options.baselineHoldingNative != null ? options.baselineHoldingNative : bookedAmount;
     const originalValueUsd = isPoints
-      ? pointsToUsd(originalPoints, effectiveCpp) + original.taxesAndFeesUsd
-      : originalCashAmount;
+      ? pointsToUsd(originalAmount, effectiveCpp) + original.taxesAndFeesUsd
+      : originalAmount;
 
     // No quote → we cannot recommend anything yet.
     if (!quote) {
