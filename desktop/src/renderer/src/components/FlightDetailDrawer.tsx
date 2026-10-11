@@ -1,10 +1,12 @@
+import { useState, type MouseEvent } from 'react';
 import { AIRLINE_LABELS, Cabin, PurchaseType, Recommendation } from '@swr/core';
 import type { PriceHistoryEntry } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
-import { ArrowRight, RefreshCw, Pencil, Trash2, TrendingDown, TrendingUp, X } from 'lucide-react';
+import { ArrowRight, Check, Copy, RefreshCw, Pencil, Trash2, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { Button, RecommendationBadge } from './ui.js';
 import { AlternativesPanel, getCheaperAlternatives } from './AlternativesPanel.js';
 import { CABIN_LABELS, FARE_LABELS, formatDate, formatDateTime, formatDuration, formatNative, formatTime, formatUsd } from '../lib/format.js';
+import { useAppStore } from '../store/useAppStore.js';
 
 interface Props {
   item: FlightWithComparison;
@@ -46,7 +48,15 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
           <section className="grid grid-cols-2 gap-4 text-sm">
-            <Detail label="Confirmation" value={flight.confirmationNumber || '—'} />
+            <div>
+              <p className="text-xs uppercase tracking-wide text-slate-500">Confirmation</p>
+              <p className="mt-0.5 flex items-center gap-1.5 capitalize text-slate-200">
+                <span>{flight.confirmationNumber || '—'}</span>
+                {flight.confirmationNumber && (
+                  <CopyButton value={flight.confirmationNumber} label="Confirmation number" />
+                )}
+              </p>
+            </div>
             {flight.cabin && flight.cabin !== Cabin.Unknown ? (
               <Detail label="Cabin" value={CABIN_LABELS[flight.cabin]} />
             ) : (
@@ -246,6 +256,36 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
         </footer>
       </div>
     </div>
+  );
+}
+
+/** Small icon button that copies a value to the clipboard, with brief check-mark feedback. */
+function CopyButton({ value, label }: { value: string; label: string }): JSX.Element {
+  const pushToast = useAppStore((state) => state.pushToast);
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(e: MouseEvent): Promise<void> {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      pushToast('success', `${label} copied`);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      pushToast('error', `Could not copy ${label.toLowerCase()}`);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => void handleCopy(e)}
+      className="rounded p-0.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200"
+      title={`Copy ${label}`}
+      aria-label={`Copy ${label}`}
+    >
+      {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+    </button>
   );
 }
 
