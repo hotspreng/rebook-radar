@@ -419,20 +419,55 @@ function decodeData(part: GmailPart): string {
   return Buffer.from(data, 'base64url').toString('utf8');
 }
 
+/** Common named HTML entities beyond the handful airline templates rarely use
+ *  but that still show up (smart quotes, dashes, ellipsis). Numeric entities
+ *  (decimal `&#8226;` and hex `&#x27;`) are decoded generically in {@link
+ *  decodeHtmlEntities} rather than listed here. */
+const NAMED_HTML_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  rsquo: '\u2019',
+  lsquo: '\u2018',
+  rdquo: '\u201d',
+  ldquo: '\u201c',
+  ndash: '\u2013',
+  mdash: '\u2014',
+  hellip: '\u2026',
+};
+
+/**
+ * Decode HTML character references — numeric (`&#8226;`, `&#x27;`) and the
+ * common named entities above — into their actual characters. Airline
+ * templates frequently encode punctuation that email parsers match literally
+ * (bullets separating route segments, zero-width spaces inside confirmation
+ * codes, apostrophes in airport names) as numeric entities; left undecoded,
+ * those parsers silently fail to match. Unrecognized entities are left as-is.
+ */
+function decodeHtmlEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, code: string) => {
+    if (code[0] === '#') {
+      const codePoint =
+        code[1]?.toLowerCase() === 'x' ? Number.parseInt(code.slice(2), 16) : Number.parseInt(code.slice(1), 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    return NAMED_HTML_ENTITIES[code.toLowerCase()] ?? match;
+  });
+}
+
 /** Convert HTML to readable plain text (no external deps). */
 function stripHtml(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<\/(p|div|tr|table|li|h[1-6]|br)>/gi, '\n')
-    .replace(/<br\s*\/?\s*>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&quot;/gi, '"')
+  return decodeHtmlEntities(
+    html
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<\/(p|div|tr|table|li|h[1-6]|br)>/gi, '\n')
+      .replace(/<br\s*\/?\s*>/gi, '\n')
+      .replace(/<[^>]+>/g, ' '),
+  )
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

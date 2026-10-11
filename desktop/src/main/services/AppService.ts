@@ -85,18 +85,25 @@ function passengerNameMatches(emailName: string, storedFullName: string): boolea
   return aGiven.join('') === bGiven.join('');
 }
 
-/** Stable identity for a single flight leg: PNR + route + departure date. */
+/**
+ * Stable identity for a single flight leg: PNR + route + departure date +
+ * passenger. A booking can cover several travelers sharing one confirmation
+ * number, each tracked as their own flight, so the passenger must be part of
+ * the key or their rows would collide and overwrite one another on import.
+ */
 function flightLegKey(
   confirmationNumber: string,
   origin: string,
   destination: string,
   departureDateTime: string,
+  passengerId: string,
 ): string {
   return [
     confirmationNumber.toUpperCase(),
     origin.toUpperCase(),
     destination.toUpperCase(),
     departureDateTime.slice(0, 10),
+    passengerId,
   ].join('|');
 }
 
@@ -482,11 +489,14 @@ export class AppService {
     const passengers = await this.deps.passengers.list();
     const existing = await this.deps.flights.list();
     // Round trips share one PNR across multiple flights, so match on the full
-    // leg identity (PNR + route + departure date), not the PNR alone.
+    // leg identity (PNR + route + departure date + passenger), not the PNR alone.
     const byLegKey = new Map<string, Flight>();
     const byConfirmation = new Map<string, Flight[]>();
     for (const f of existing) {
-      byLegKey.set(flightLegKey(f.confirmationNumber, f.route.origin.code, f.route.destination.code, f.departureDateTime), f);
+      byLegKey.set(
+        flightLegKey(f.confirmationNumber, f.route.origin.code, f.route.destination.code, f.departureDateTime, f.passengerId),
+        f,
+      );
       const pnr = f.confirmationNumber.toUpperCase();
       const list = byConfirmation.get(pnr) ?? [];
       list.push(f);
@@ -504,8 +514,8 @@ export class AppService {
     const cancelledLegs = folded.cancelledTrips.flatMap((t) => expandTripLegs(t));
 
     for (const trip of folded.active) {
-      const passengerId = await this.resolvePassengerForImport(passengers, trip.passengerNames);
-      if (!passengerId) {
+      const passengerIds = await this.resolvePassengersForImport(passengers, trip.passengerNames);
+      if (passengerIds.length === 0) {
         log.info('Skipped trip — no passenger name in email', {
           confirmation: trip.confirmationNumber,
           names: trip.passengerNames,
@@ -513,40 +523,45 @@ export class AppService {
         skipped += 1;
         continue;
       }
-      // Expand a multi-leg (round-trip) confirmation into one flight per leg.
+      // Expand a multi-leg (round-trip) confirmation into one flight per leg,
+      // and one flight per passenger on the booking — each traveler is tracked
+      // and compared independently even though they share a confirmation #.
       for (const legTrip of expandTripLegs(trip)) {
-        const key = flightLegKey(
-          legTrip.confirmationNumber,
-          legTrip.origin,
-          legTrip.destination,
-          legTrip.departureDateTime,
-        );
-        const prior = byLegKey.get(key);
-        let flight: Flight;
-        if (prior) {
-          flight = this.mergeEmailTripIntoFlight(prior, legTrip);
-          await this.deps.flights.update(flight);
-          updated += 1;
-          // A re-imported confirmation for the same date/route at a lower paid
-          // price than the frozen original is a realized rebooking saving.
-          await this.maybeRecordRebooking(prior, legTrip);
-        } else {
-          flight = await this.createFlightFromEmailTrip(passengerId, legTrip);
-          imported += 1;
+        for (const passengerId of passengerIds) {
+          const key = flightLegKey(
+            legTrip.confirmationNumber,
+            legTrip.origin,
+            legTrip.destination,
+            legTrip.departureDateTime,
+            passengerId,
+          );
+          const prior = byLegKey.get(key);
+          let flight: Flight;
+          if (prior) {
+            flight = this.mergeEmailTripIntoFlight(prior, legTrip);
+            await this.deps.flights.update(flight);
+            updated += 1;
+            // A re-imported confirmation for the same date/route at a lower paid
+            // price than the frozen original is a realized rebooking saving.
+            await this.maybeRecordRebooking(prior, legTrip);
+          } else {
+            flight = await this.createFlightFromEmailTrip(passengerId, legTrip);
+            imported += 1;
+          }
+          // A change to a cheaper fare under the SAME confirmation number, caught
+          // within a single import via the leg's frozen original fare.
+          await this.maybeRecordSameImportRebooking(flight, legTrip);
+          // Cancel-and-rebook under a NEW confirmation number: credit the drop
+          // against the cancelled trip's fare for the same passenger/route/date.
+          // Runs for re-imported flights too (the double-count guard dedupes).
+          const cancelledMatch = this.findCancelledRebookMatch(cancelledLegs, legTrip);
+          if (cancelledMatch) {
+            await this.maybeRecordCancelRebooking(flight, legTrip, cancelledMatch);
+          }
+          // For a brand-new booking, capture the real market fare so the
+          // original cost shows an "actual" price instead of an estimate.
+          await this.maybeCaptureBookingPrice(flight, legTrip.bookedAt);
         }
-        // A change to a cheaper fare under the SAME confirmation number, caught
-        // within a single import via the leg's frozen original fare.
-        await this.maybeRecordSameImportRebooking(flight, legTrip);
-        // Cancel-and-rebook under a NEW confirmation number: credit the drop
-        // against the cancelled trip's fare for the same passenger/route/date.
-        // Runs for re-imported flights too (the double-count guard dedupes).
-        const cancelledMatch = this.findCancelledRebookMatch(cancelledLegs, legTrip);
-        if (cancelledMatch) {
-          await this.maybeRecordCancelRebooking(flight, legTrip, cancelledMatch);
-        }
-        // For a brand-new booking, capture the real market fare so the
-        // original cost shows an "actual" price instead of an estimate.
-        await this.maybeCaptureBookingPrice(flight, legTrip.bookedAt);
       }
     }
 
@@ -794,26 +809,37 @@ export class AppService {
   }
 
   /**
-   * Resolve the passenger for an imported trip. The Gmail inbox is shared
-   * across the whole family, so each booking can be for a different person.
-   * Prefer an existing passenger that matches one of the email's names;
-   * otherwise auto-create a passenger from the first name on the booking and
-   * add it to {@link passengers} so later trips for the same person match.
+   * Resolve EVERY passenger on an imported trip, not just one. The Gmail inbox
+   * is shared across the whole family and a single booking can cover several
+   * travelers (e.g. a family trip), so each name on the email gets its own
+   * tracked flight. For each name: prefer an existing passenger it matches;
+   * otherwise auto-create one and add it to {@link passengers} so later trips
+   * for the same person match. Returns one id per distinct resolved passenger,
+   * in booking order; duplicate names on the email resolve to one id.
    */
-  private async resolvePassengerForImport(
+  private async resolvePassengersForImport(
     passengers: Passenger[],
     names: string[],
-  ): Promise<string | undefined> {
-    const existingId = this.matchPassengerByName(passengers, names);
-    if (existingId) return existingId;
+  ): Promise<string[]> {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of names) {
+      const name = raw.trim();
+      if (!name) continue;
 
-    const newName = names.map((n) => n.trim()).find((n) => n.length > 0);
-    if (!newName) return undefined;
-
-    const created = await this.createPassenger({ fullName: newName, accountIds: [] });
-    passengers.push(created);
-    log.info('Auto-created passenger from email import', { passenger: newName });
-    return created.id;
+      let id = this.matchPassengerByName(passengers, [name]);
+      if (!id) {
+        const created = await this.createPassenger({ fullName: name, accountIds: [] });
+        passengers.push(created);
+        log.info('Auto-created passenger from email import', { passenger: name });
+        id = created.id;
+      }
+      if (!seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+    return ids;
   }
 
   private mergeEmailTripIntoFlight(existing: Flight, trip: RetrievedTrip): Flight {

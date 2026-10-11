@@ -86,3 +86,101 @@ test('parseAirCanadaEmail retains an operated-by partner flight number', () => {
   assert.equal(event.trip.segments?.[0]?.flightNumber, 'UA 2663');
   assert.equal(event.trip.legs, undefined);
 });
+
+// Real multi-passenger Aeroplan confirmation body shape (OGG→ORD, overnight,
+// 3 travelers). Unlike the single-passenger fixture above, every field sits on
+// its OWN line (no combined "ORD ... EGE" / "08:44 10:55" lines), the arrival
+// is next-day via a standalone "+1"/"day" pair, the flight number has no
+// trailing bullet, and each traveler's name is sandwiched between a "P<n>"
+// index marker and a repeated PASSENGER_NAME_START/END wrapper the template
+// inserts (one such block per traveler, each with its own "Seats" line).
+const MULTI_PASSENGER_CONFIRMATION = `
+Booking Confirmation
+BIDSWT BOOKING_REFERENCE_END
+BOOKING_DATE_START
+14 Sep, 2026 BOOKING_DATE_END Issued
+Flights
+Departure • Tue 12 Jan, 2027
+Economy - Standard Reward
+Kahului / Maui
+OGG
+Chicago
+ORD
+17:05
+05:03
++1
+day
+Kahului Airport
+O'Hare International Airport, Terminal 1
+UA203
+• Operated by
+United Airlines
+Aircraft type: Boeing 787-10
+Duration: 7hr 58m
+Cabin: Economy (X)
+United Airlines
+booking reference:
+DSPJ1F
+Passengers
+Amy United States Sprenger P0 PASSENGER_NAME_START Amy United States Sprenger PASSENGER_NAME_END
+Ticket #: 0142336807430
+Aeroplan #: 974154429
+Seats
+OGG ➞ ORD
+-
+Emily Jean Sprenger P1 PASSENGER_NAME_START Emily Jean Sprenger PASSENGER_NAME_END
+Ticket #: 0142336807431
+Seats
+OGG ➞ ORD
+-
+Joshua Daniel Sprenger P2 PASSENGER_NAME_START Joshua Daniel Sprenger PASSENGER_NAME_END
+Ticket #: 0142336807432
+Seats
+OGG ➞ ORD
+-
+Purchase Summary
+Aeroplan
+•••• 4429
+75,000
+pts
+•••• 4518
+CAD $188.70
+Grand total
+75,000 pts + CAD $188.70
+Amy United States Sprenger
+25,000 pts + CAD $62.90
+Emily Jean Sprenger
+25,000 pts + CAD $62.90
+Joshua Daniel Sprenger
+25,000 pts + CAD $62.90
+`;
+
+test('parseAirCanadaEmail parses a multi-passenger Aeroplan confirmation with one field per line', () => {
+  const event = parseAirCanadaEmail(
+    message({
+      subject: 'Air Canada - 12 Jan 2027: Kahului / Maui - Chicago (Booking reference: BIDSWT)',
+      body: MULTI_PASSENGER_CONFIRMATION,
+    }),
+  );
+  assert.ok(event?.trip, 'expected a parsed trip');
+  const trip = event.trip;
+  assert.equal(event.confirmationNumber, 'BIDSWT');
+  assert.equal(trip.origin, 'OGG');
+  assert.equal(trip.destination, 'ORD');
+  assert.equal(trip.departureDateTime, '2027-01-12T17:05:00');
+  // Overnight arrival: the standalone "+1"/"day" pair rolls the date forward.
+  assert.equal(trip.arrivalDateTime, '2027-01-13T05:03:00');
+  assert.equal(trip.durationMinutes, 478);
+  assert.equal(trip.segments?.[0]?.flightNumber, 'UA 203');
+  assert.deepEqual(trip.passengerNames, [
+    'Amy United States Sprenger',
+    'Emily Jean Sprenger',
+    'Joshua Daniel Sprenger',
+  ]);
+  // "Grand total" covers all 3 travelers (75,000 pts + CAD $188.70); each
+  // tracked flight is for ONE traveler, so the trip carries the per-passenger
+  // share — verified against the email's own per-passenger breakdown.
+  assert.equal(trip.purchaseType, PurchaseType.Points);
+  assert.equal(trip.paidPoints, 25000);
+  assert.deepEqual(trip.foreignTaxesAndFees, { amount: 62.9, currency: 'CAD' });
+});

@@ -56,10 +56,17 @@ export function Dashboard(): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [airlineFilter, setAirlineFilter] = useState<string>('all');
 
+  // Scoped to the SAME passenger too: a confirmation number can cover several
+  // travelers (each tracked as their own flight), and those are separate
+  // bookings to edit, not other legs of this passenger's round trip.
   const editingGroupLegs = useMemo<Flight[] | undefined>(() => {
     if (!editing) return undefined;
     const legs = flights
-      .filter((item) => item.flight.confirmationNumber === editing.confirmationNumber)
+      .filter(
+        (item) =>
+          item.flight.confirmationNumber === editing.confirmationNumber &&
+          item.flight.passengerId === editing.passengerId,
+      )
       .map((item) => item.flight)
       .sort((left, right) => left.departureDateTime.localeCompare(right.departureDateTime));
     return legs.length >= 2 ? legs : undefined;
@@ -161,7 +168,10 @@ export function Dashboard(): JSX.Element {
   // Round trips are stored as separate legs sharing a confirmation number.
   // Keep the group only so one action can sync both legs and the realized-
   // savings column can aggregate rebook events; prices and comparisons stay
-  // per-leg because each direction can have its own entered amount.
+  // per-leg because each direction can have its own entered amount. Keyed by
+  // confirmation + passenger, since a booking can cover several travelers —
+  // each tracked as their own flight — who must NOT be grouped together as if
+  // they were legs of one person's round trip.
   const bookingGroups = useMemo(() => {
     const m = new Map<
       string,
@@ -174,15 +184,16 @@ export function Dashboard(): JSX.Element {
     for (const it of filtered) {
       const pnr = it.flight.confirmationNumber;
       if (!pnr) continue;
+      const key = `${pnr}|${it.flight.passengerId}`;
       const g =
-        m.get(pnr) ?? {
+        m.get(key) ?? {
           count: 0,
           firstLegId: it.flight.id,
           legIds: [],
         };
       g.count += 1;
       g.legIds.push(it.flight.id);
-      m.set(pnr, g);
+      m.set(key, g);
     }
     return m;
   }, [filtered]);
@@ -383,7 +394,7 @@ export function Dashboard(): JSX.Element {
                 const canExpand = cheaper.length > 0;
                 // Round-trip grouping: show the booking's combined total once.
                 const group = item.flight.confirmationNumber
-                  ? bookingGroups.get(item.flight.confirmationNumber)
+                  ? bookingGroups.get(`${item.flight.confirmationNumber}|${item.flight.passengerId}`)
                   : undefined;
                 const isRoundTrip = (group?.count ?? 0) >= 2;
                 const isFirstLeg = !group || group.firstLegId === item.flight.id;
