@@ -14,6 +14,7 @@ import {
   fetchSerpApiUsage,
   generateId,
   isAirlineError,
+  operatingAirline,
   type Account,
   type AccountCredentials,
   type AccountRepository,
@@ -1655,10 +1656,7 @@ export class AppService {
   /** Air Canada reward tickets can be operated by a partner. Search the known
    * operating carrier while retaining Aeroplan's points valuation. */
   private fareSearchAirlineName(flight: Flight): string {
-    if (flight.airline !== Airline.AirCanada) return AIRLINE_LABELS[flight.airline];
-    const prefix = flight.segments?.[0]?.flightNumber?.match(/^([A-Z0-9]{2})\b/i)?.[1]?.toUpperCase();
-    if (prefix === 'UA') return AIRLINE_LABELS[Airline.United];
-    return AIRLINE_LABELS[Airline.AirCanada];
+    return AIRLINE_LABELS[operatingAirline(flight)];
   }
 
   private async requireAccount(id: string): Promise<Account> {

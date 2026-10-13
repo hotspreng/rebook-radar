@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { AIRLINE_LABELS, Airline, PurchaseType, Recommendation } from '@swr/core';
+import { AIRLINE_LABELS, Airline, PurchaseType, Recommendation, operatingAirline } from '@swr/core';
 import type { EmailImportProgress, Flight, FlightWithComparison, PriceCheckProgress, SavingsReport } from '@shared/dto';
 import {
   ArrowRight,
@@ -147,7 +147,7 @@ export function Dashboard(): JSX.Element {
     const now = Date.now();
     return flights.filter((f) => {
       if (passengerFilter !== 'all' && f.flight.passengerId !== passengerFilter) return false;
-      if (airlineFilter !== 'all' && f.flight.airline !== airlineFilter) return false;
+      if (airlineFilter !== 'all' && operatingAirline(f.flight) !== airlineFilter) return false;
       // Flown flights move to the Past Flights blade.
       const departed = Date.parse(f.flight.departureDateTime);
       if (Number.isFinite(departed) && departed < now) return false;
@@ -155,10 +155,13 @@ export function Dashboard(): JSX.Element {
     });
   }, [flights, passengerFilter, airlineFilter]);
 
-  // Airlines actually present among the tracked flights, for the filter dropdown.
+  // Airlines actually present among the tracked flights, for the filter
+  // dropdown. Grouped by the OPERATING carrier (see operatingAirline), so a
+  // partner-operated award booking (e.g. Aeroplan redeemed for a United
+  // flight) files under the airline the traveler actually flies.
   const airlineOptions = useMemo(() => {
     const present = new Set<string>();
-    for (const f of flights) present.add(f.flight.airline);
+    for (const f of flights) present.add(operatingAirline(f.flight));
     const items = [...present]
       .sort()
       .map((a) => ({ value: a, label: AIRLINE_LABELS[a as Airline] ?? a }));
@@ -438,7 +441,7 @@ export function Dashboard(): JSX.Element {
                           {item.flight.route.destination.code}
                         </span>
                         <span className="mt-0.5 block text-[11px] text-slate-500">
-                          {AIRLINE_LABELS[item.flight.airline] ?? item.flight.airline}
+                          {AIRLINE_LABELS[operatingAirline(item.flight)] ?? item.flight.airline}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-slate-400">

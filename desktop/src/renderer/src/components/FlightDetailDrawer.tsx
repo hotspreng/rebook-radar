@@ -1,5 +1,5 @@
 import { useState, type MouseEvent } from 'react';
-import { AIRLINE_LABELS, Cabin, PurchaseType, Recommendation } from '@swr/core';
+import { AIRLINE_LABELS, Cabin, PurchaseType, Recommendation, operatingAirline } from '@swr/core';
 import type { PriceHistoryEntry } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
 import { ArrowRight, Check, Copy, RefreshCw, Pencil, Trash2, TrendingDown, TrendingUp, X } from 'lucide-react';
@@ -22,6 +22,13 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
   const type = flight.originalCost.purchaseType;
   const isPoints = type === PurchaseType.Points;
   const cheaper = getCheaperAlternatives(item);
+  // The booking's program (flight.airline) can differ from who actually flies
+  // the route — e.g. Aeroplan (Air Canada) redeemed for a partner-operated
+  // United flight. The header shows the operating carrier, consistent with
+  // the dashboard; "Booked via" below surfaces the original program when it
+  // differs.
+  const operating = operatingAirline(flight);
+  const bookedVia = operating !== flight.airline ? flight.airline : undefined;
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-black/50" onMouseDown={onClose}>
@@ -32,7 +39,7 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
         <header className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              {AIRLINE_LABELS[flight.airline] ?? flight.airline}
+              {AIRLINE_LABELS[operating] ?? operating}
             </p>
             <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
               {flight.route.origin.code}
@@ -70,6 +77,7 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
               <Detail label="Travel time" value={formatDuration(flight.durationMinutes)} />
             )}
             <Detail label="Booked" value={formatDate(flight.bookingDate)} />
+            {bookedVia && <Detail label="Booked via" value={AIRLINE_LABELS[bookedVia] ?? bookedVia} />}
             <Detail label="Account" value={item.accountLabel ?? '—'} />
             <Detail label="Source" value={flight.source} />
           </section>

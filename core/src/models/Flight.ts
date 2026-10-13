@@ -102,3 +102,36 @@ export interface Flight {
 }
 
 export type NewFlight = Omit<Flight, 'id' | 'createdAt' | 'updatedAt'>;
+
+/**
+ * Known marketing-carrier flight-number prefixes mapped to their {@link
+ * Airline}. Used only to infer the carrier actually OPERATING a flight when
+ * it differs from the program the booking was made through — see {@link
+ * operatingAirline}. Extend this as other loyalty-program bookings on
+ * partner-operated flights are discovered.
+ */
+const FLIGHT_NUMBER_PREFIX_AIRLINE: Partial<Record<string, Airline>> = {
+  UA: Airline.United,
+};
+
+/**
+ * The airline actually operating/marketing a flight, for DISPLAY purposes.
+ *
+ * `Flight.airline` records which loyalty program/account a booking was made
+ * through — needed for point valuation (an Aeroplan mile is worth what
+ * Aeroplan redemptions are worth, regardless of which airline flies the
+ * route) and for picking the right fare-search filter. But Aeroplan
+ * (Air Canada's program) frequently redeems for a PARTNER-operated flight —
+ * e.g. a United-operated, United-numbered flight booked through Air Canada —
+ * so showing "Air Canada" as the flight's airline is misleading to the user.
+ *
+ * This derives the operating carrier from the first segment's flight-number
+ * prefix when it disagrees with the stored `airline`, falling back to the
+ * stored value when there is no segment data or no recognized prefix (so a
+ * genuine Air Canada-operated flight still shows as Air Canada).
+ */
+export function operatingAirline(flight: Flight): Airline {
+  if (flight.airline !== Airline.AirCanada) return flight.airline;
+  const prefix = flight.segments?.[0]?.flightNumber?.match(/^([A-Z0-9]{2})\b/i)?.[1]?.toUpperCase();
+  return (prefix && FLIGHT_NUMBER_PREFIX_AIRLINE[prefix]) || flight.airline;
+}
