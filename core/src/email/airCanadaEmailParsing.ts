@@ -106,6 +106,12 @@ function parseSegments(body: string): ParsedSegment[] {
     const date = parseDate(lines[start]!);
     if (!date) continue;
 
+    // A single "Departure"/"Return" header covers ONE calendar day of travel,
+    // which can itself be a connecting itinerary (e.g. ITH→IAD→ORD) printed as
+    // several repeating per-segment blocks with no header of their own. Track
+    // one segment's fields at a time, and whenever a fresh origin/destination
+    // pair starts while the current segment is already complete, finalize it
+    // and start accumulating the next.
     let origin: string | undefined;
     let destination: string | undefined;
     let departureTime: string | undefined;
@@ -114,25 +120,54 @@ function parseSegments(body: string): ParsedSegment[] {
     let durationMinutes: number | undefined;
     let nextDayArrival = false;
 
+    const isSegmentComplete = (): boolean =>
+      origin != null && destination != null && departureTime != null && arrivalTime != null;
+
+    const pushSegment = (): void => {
+      if (!isSegmentComplete()) return;
+      const arrivalDate = nextDayArrival || arrivalTime! < departureTime! ? nextDay(date) : date;
+      segments.push({
+        origin: origin!,
+        destination: destination!,
+        departureDateTime: `${date}T${departureTime}:00`,
+        arrivalDateTime: `${arrivalDate}T${arrivalTime}:00`,
+        flightNumber,
+        durationMinutes,
+      });
+    };
+
+    const resetSegment = (): void => {
+      origin = undefined;
+      destination = undefined;
+      departureTime = undefined;
+      arrivalTime = undefined;
+      flightNumber = undefined;
+      durationMinutes = undefined;
+      nextDayArrival = false;
+    };
+
     for (let index = start + 1; index < end; index++) {
       const line = lines[index]!;
 
-      if (!origin || !destination) {
-        // One airport code alone on its own line (newer per-field-per-line
-        // layout): accumulate across separate lines, first → origin, next →
-        // destination.
-        const soloCode = line.match(/^([A-Z]{3})$/);
+      // One airport code alone on its own line (newer per-field-per-line
+      // layout), or both codes on one line (older layout), e.g. "Chicago ORD
+      // Vail Eagle EGE". Either way, a fresh code appearing once the CURRENT
+      // segment is already complete (origin+destination+times) starts a new
+      // connecting segment rather than being folded into the finished one.
+      const soloCode = line.match(/^([A-Z]{3})$/);
+      const comboCodes = soloCode ? [] : [...line.matchAll(/\b([A-Z]{3})\b/g)].map((m) => m[1]!);
+      if (soloCode || comboCodes.length >= 2) {
+        if (isSegmentComplete()) {
+          pushSegment();
+          resetSegment();
+        }
         if (soloCode) {
           if (!origin) origin = soloCode[1];
-          else destination = soloCode[1];
-          continue;
+          else if (!destination) destination = soloCode[1];
+        } else if (!origin || !destination) {
+          [origin, destination] = comboCodes;
         }
-        // Both codes on one line (older layout), e.g. "Chicago ORD Vail Eagle EGE".
-        const codes = [...line.matchAll(/\b([A-Z]{3})\b/g)].map((match) => match[1]!);
-        if (codes.length >= 2) {
-          [origin, destination] = codes;
-          continue;
-        }
+        continue;
       }
 
       if (!departureTime || !arrivalTime) {
@@ -184,16 +219,7 @@ function parseSegments(body: string): ParsedSegment[] {
       }
     }
 
-    if (!origin || !destination || !departureTime || !arrivalTime) continue;
-    const arrivalDate = nextDayArrival || arrivalTime < departureTime ? nextDay(date) : date;
-    segments.push({
-      origin,
-      destination,
-      departureDateTime: `${date}T${departureTime}:00`,
-      arrivalDateTime: `${arrivalDate}T${arrivalTime}:00`,
-      flightNumber,
-      durationMinutes,
-    });
+    pushSegment();
   }
   return segments;
 }

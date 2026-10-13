@@ -184,3 +184,86 @@ test('parseAirCanadaEmail parses a multi-passenger Aeroplan confirmation with on
   assert.equal(trip.paidPoints, 25000);
   assert.deepEqual(trip.foreignTaxesAndFees, { amount: 62.9, currency: 'CAD' });
 });
+
+// Real connecting-itinerary confirmation body shape (ITH→IAD→ORD, one-way,
+// single passenger). The CONNECTION is printed under a SINGLE "Departure"
+// header with no header of its own for the second leg — two full repeating
+// per-segment blocks (codes/times/flight number/operator/duration/cabin) back
+// to back — so the segment scanner must split them into two segments rather
+// than stopping once the first segment's fields are filled.
+const CONNECTING_CONFIRMATION = `
+Booking Confirmation
+2K4C2W Issued 14 Oct, 2026
+Flights
+Departure • Tue 15 Dec, 2026
+Economy - Standard Reward
+Ithaca
+ITH
+Washington
+IAD
+20:10
+21:30
+Ithaca Tompkins Regional Airport
+Washington Dulles International Airport
+UA4954
+• Operated by
+CommuteAir dba United Express
+Aircraft type: Embraer ERJ-145
+Duration: 1hr 20m
+Cabin: Economy (X)
+Washington
+IAD
+Chicago
+ORD
+22:15
+23:29
+Washington Dulles International Airport
+O'Hare International Airport, Terminal 1
+UA421
+• Operated by
+United Airlines
+Aircraft type: Boeing 737 MAX 9
+Duration: 2hr 14m
+Cabin: Economy (X)
+United Airlines booking reference: DSPJ1F
+Passengers
+Emily Jean Sprenger
+Ticket #: 0142336807433
+Seats
+ITH ➞ ORD -
+Purchase Summary
+Aeroplan •••• 4429 15,000 pts
+•••• 3372 CAD $47.00
+1 Adult
+Grand total 15,000 pts + CAD $47.00
+`;
+
+test('parseAirCanadaEmail splits a single-day connection into two segments under one header', () => {
+  const event = parseAirCanadaEmail(
+    message({
+      subject: 'Air Canada - 15 Dec 2026: Ithaca - Chicago (Booking reference: 2K4C2W)',
+      body: CONNECTING_CONFIRMATION,
+    }),
+  );
+  assert.ok(event?.trip, 'expected a parsed trip');
+  const trip = event.trip;
+  assert.equal(event.confirmationNumber, '2K4C2W');
+  // The overall trip spans the full connection, not just the first leg.
+  assert.equal(trip.origin, 'ITH');
+  assert.equal(trip.destination, 'ORD');
+  assert.equal(trip.departureDateTime, '2026-12-15T20:10:00');
+  assert.equal(trip.arrivalDateTime, '2026-12-15T23:29:00');
+  assert.equal(trip.legs, undefined, 'one calendar day of travel is a single leg');
+  assert.equal(trip.segments?.length, 2);
+  assert.deepEqual(
+    trip.segments?.map((s) => [s.origin, s.destination, s.flightNumber]),
+    [
+      ['ITH', 'IAD', 'UA 4954'],
+      ['IAD', 'ORD', 'UA 421'],
+    ],
+  );
+  assert.equal(trip.segments?.[0]?.departureDateTime, '2026-12-15T20:10:00');
+  assert.equal(trip.segments?.[0]?.arrivalDateTime, '2026-12-15T21:30:00');
+  assert.equal(trip.segments?.[1]?.departureDateTime, '2026-12-15T22:15:00');
+  assert.equal(trip.segments?.[1]?.arrivalDateTime, '2026-12-15T23:29:00');
+});

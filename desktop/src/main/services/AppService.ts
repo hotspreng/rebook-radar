@@ -491,10 +491,21 @@ export class AppService {
     // Round trips share one PNR across multiple flights, so match on the full
     // leg identity (PNR + route + departure date + passenger), not the PNR alone.
     const byLegKey = new Map<string, Flight>();
+    // Fallback match for when a parser correctness fix changes a stored
+    // flight's route (e.g. a connecting itinerary that used to be mis-parsed
+    // as only its first segment): same confirmation + passenger + departure
+    // DATE is still a stable identity even though the route-inclusive key no
+    // longer matches, so re-importing repairs the existing record in place
+    // instead of leaving a stale duplicate behind.
+    const byConfirmationPassengerDate = new Map<string, Flight>();
     const byConfirmation = new Map<string, Flight[]>();
     for (const f of existing) {
       byLegKey.set(
         flightLegKey(f.confirmationNumber, f.route.origin.code, f.route.destination.code, f.departureDateTime, f.passengerId),
+        f,
+      );
+      byConfirmationPassengerDate.set(
+        [f.confirmationNumber.toUpperCase(), f.passengerId, f.departureDateTime.slice(0, 10)].join('|'),
         f,
       );
       const pnr = f.confirmationNumber.toUpperCase();
@@ -535,7 +546,12 @@ export class AppService {
             legTrip.departureDateTime,
             passengerId,
           );
-          const prior = byLegKey.get(key);
+          const fallbackKey = [
+            legTrip.confirmationNumber.toUpperCase(),
+            passengerId,
+            legTrip.departureDateTime.slice(0, 10),
+          ].join('|');
+          const prior = byLegKey.get(key) ?? byConfirmationPassengerDate.get(fallbackKey);
           let flight: Flight;
           if (prior) {
             flight = this.mergeEmailTripIntoFlight(prior, legTrip);
@@ -544,6 +560,9 @@ export class AppService {
             // A re-imported confirmation for the same date/route at a lower paid
             // price than the frozen original is a realized rebooking saving.
             await this.maybeRecordRebooking(prior, legTrip);
+            // Consumed: don't let another leg in this same trip (e.g. a
+            // same-day round trip) match this record again via the fallback.
+            byConfirmationPassengerDate.delete(fallbackKey);
           } else {
             flight = await this.createFlightFromEmailTrip(passengerId, legTrip);
             imported += 1;
@@ -893,7 +912,11 @@ export class AppService {
       },
       departureDateTime: trip.departureDateTime || existing.departureDateTime,
       arrivalDateTime: trip.arrivalDateTime ?? existing.arrivalDateTime,
-      durationMinutes: trip.durationMinutes ?? existing.durationMinutes,
+      // A multi-segment trip intentionally carries no duration (see
+      // groupSegmentsIntoLegs); don't fall back to a stale single-segment
+      // value left over from before a parser fix corrected the route (e.g. a
+      // connection that used to be mis-parsed as only its first leg).
+      durationMinutes: trip.durationMinutes ?? (segments ? undefined : existing.durationMinutes),
       segments: segments ?? existing.segments,
       fareType: trip.fareType ?? existing.fareType,
       cabin: trip.cabin ?? existing.cabin,
