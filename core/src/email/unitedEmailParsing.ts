@@ -359,7 +359,7 @@ function groupSegmentsIntoLegs(segments: ParsedSegment[]): RetrievedTripLeg[] {
       arrivalDateTime: lastSeg.arrivalDateTime || undefined,
       // Travel time spans time zones (United flies international); a naive
       // arrival−departure would be wrong, so leave duration unset.
-      segments: retSegments.length > 1 ? retSegments : undefined,
+      segments: retSegments,
     };
   });
 }

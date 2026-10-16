@@ -139,7 +139,11 @@ test('parses a real Southwest booking email (subject PNR + body fields)', () => 
   assert.equal(event.trip?.paidCashUsd, undefined);
   assert.equal(event.trip?.taxesAndFeesUsd, 5.6);
   assert.equal(event.trip?.fareType, 'basic'); // "Basic" → Basic
-  assert.match(event.trip?.departureDateTime ?? '', /^2026-10-10T17:10/);  assert.match(event.trip?.arrivalDateTime ?? '', /^2026-10-10T18:00/);});
+  assert.match(event.trip?.departureDateTime ?? '', /^2026-10-10T17:10/);  assert.match(event.trip?.arrivalDateTime ?? '', /^2026-10-10T18:00/);
+  // A nonstop keeps its one operated segment so the flight number survives.
+  assert.equal(event.trip?.segments?.length, 1);
+  assert.equal(event.trip?.segments?.[0]?.flightNumber, 'WN 1308');
+});
 
 test('parses a real Southwest cancellation subject', () => {
   const event = parseSouthwestEmail(

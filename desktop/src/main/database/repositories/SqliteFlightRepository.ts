@@ -36,6 +36,7 @@ interface FlightRow {
   account_id: string | null;
   airline: string | null;
   confirmation_number: string;
+  partner_confirmation_number: string | null;
   origin_code: string;
   origin_name: string | null;
   dest_code: string;
@@ -79,6 +80,7 @@ function toDomain(row: FlightRow): Flight {
     accountId: row.account_id ?? undefined,
     airline: (row.airline as Airline) ?? Airline.Southwest,
     confirmationNumber: row.confirmation_number,
+    partnerConfirmationNumber: row.partner_confirmation_number ?? undefined,
     route: {
       origin: { code: row.origin_code, name: row.origin_name ?? undefined },
       destination: { code: row.dest_code, name: row.dest_name ?? undefined },
@@ -113,6 +115,7 @@ function bindParams(f: Flight): Record<string, unknown> {
     ':account_id': f.accountId ?? null,
     ':airline': f.airline ?? Airline.Southwest,
     ':confirmation_number': f.confirmationNumber,
+    ':partner_confirmation_number': f.partnerConfirmationNumber ?? null,
     ':origin_code': f.route.origin.code,
     ':origin_name': f.route.origin.name ?? null,
     ':dest_code': f.route.destination.code,
@@ -172,13 +175,13 @@ export class SqliteFlightRepository implements FlightRepository {
   async create(f: Flight): Promise<Flight> {
     execute(
       `INSERT INTO flights (
-        id, passenger_id, account_id, confirmation_number,
+        id, passenger_id, account_id, confirmation_number, partner_confirmation_number,
         origin_code, origin_name, dest_code, dest_name,
         departure_dt, arrival_dt, duration_minutes, fare_type, purchase_type,
         cash_usd, points, taxes_fees_usd, original_market_cash_usd, segments_json, payments_json, booking_date,
         source, notes, monitoring, created_at, updated_at, airline, cabin
       ) VALUES (
-        :id, :passenger_id, :account_id, :confirmation_number,
+        :id, :passenger_id, :account_id, :confirmation_number, :partner_confirmation_number,
         :origin_code, :origin_name, :dest_code, :dest_name,
         :departure_dt, :arrival_dt, :duration_minutes, :fare_type, :purchase_type,
         :cash_usd, :points, :taxes_fees_usd, :original_market_cash_usd, :segments_json, :payments_json, :booking_date,
@@ -193,6 +196,7 @@ export class SqliteFlightRepository implements FlightRepository {
     execute(
       `UPDATE flights SET
         passenger_id = :passenger_id, account_id = :account_id, confirmation_number = :confirmation_number,
+        partner_confirmation_number = :partner_confirmation_number,
         airline = :airline,
         origin_code = :origin_code, origin_name = :origin_name, dest_code = :dest_code, dest_name = :dest_name,
         departure_dt = :departure_dt, arrival_dt = :arrival_dt, duration_minutes = :duration_minutes, fare_type = :fare_type, purchase_type = :purchase_type,

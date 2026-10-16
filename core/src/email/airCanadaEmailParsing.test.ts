@@ -87,6 +87,32 @@ test('parseAirCanadaEmail retains an operated-by partner flight number', () => {
   assert.equal(event.trip.legs, undefined);
 });
 
+test('parseAirCanadaEmail captures the partner airline booking reference printed inline', () => {
+  const event = parseAirCanadaEmail(message());
+  assert.ok(event?.trip);
+  // "United Airlines booking reference: BRPBNN" — not Air Canada's own AOGYVQ.
+  assert.equal(event.confirmationNumber, 'AOGYVQ');
+  assert.equal(event.trip.partnerConfirmationNumber, 'BRPBNN');
+});
+
+test('parseAirCanadaEmail leaves the partner reference empty when none is printed', () => {
+  const event = parseAirCanadaEmail(
+    message({ body: CONFIRMATION.replace('United Airlines booking reference: BRPBNN\n', '') }),
+  );
+  assert.ok(event?.trip);
+  assert.equal(event.trip.partnerConfirmationNumber, undefined);
+});
+
+test("parseAirCanadaEmail never mistakes Air Canada's own reference for a partner's", () => {
+  const body = CONFIRMATION.replace(
+    'United Airlines booking reference: BRPBNN',
+    'Air Canada booking reference: AOGYVQ',
+  );
+  const event = parseAirCanadaEmail(message({ body }));
+  assert.ok(event?.trip);
+  assert.equal(event.trip.partnerConfirmationNumber, undefined);
+});
+
 // Real multi-passenger Aeroplan confirmation body shape (OGG→ORD, overnight,
 // 3 travelers). Unlike the single-passenger fixture above, every field sits on
 // its OWN line (no combined "ORD ... EGE" / "08:44 10:55" lines), the arrival
@@ -183,6 +209,9 @@ test('parseAirCanadaEmail parses a multi-passenger Aeroplan confirmation with on
   assert.equal(trip.purchaseType, PurchaseType.Points);
   assert.equal(trip.paidPoints, 25000);
   assert.deepEqual(trip.foreignTaxesAndFees, { amount: 62.9, currency: 'CAD' });
+  // The carrier name, "booking reference:" and the code sit on three separate
+  // lines in this layout; the code is United's, not Air Canada's BIDSWT.
+  assert.equal(trip.partnerConfirmationNumber, 'DSPJ1F');
 });
 
 // Real connecting-itinerary confirmation body shape (ITH→IAD→ORD, one-way,
@@ -254,6 +283,7 @@ test('parseAirCanadaEmail splits a single-day connection into two segments under
   assert.equal(trip.departureDateTime, '2026-12-15T20:10:00');
   assert.equal(trip.arrivalDateTime, '2026-12-15T23:29:00');
   assert.equal(trip.legs, undefined, 'one calendar day of travel is a single leg');
+  assert.equal(trip.partnerConfirmationNumber, 'DSPJ1F');
   assert.equal(trip.segments?.length, 2);
   assert.deepEqual(
     trip.segments?.map((s) => [s.origin, s.destination, s.flightNumber]),

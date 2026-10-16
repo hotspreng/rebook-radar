@@ -133,6 +133,9 @@ test('parseUnitedEmail parses an award one-way receipt with miles + taxes', () =
   assert.equal(trip.origin, 'ORD');
   assert.equal(trip.destination, 'KEF');
   assert.equal(trip.passengerNames.length, 5);
+  // The nonstop's single segment is kept so the flight number is available.
+  assert.equal(trip.segments?.length, 1);
+  assert.equal(trip.segments?.[0]?.flightNumber, 'UA 912');
 });
 
 test('parseUnitedEmail skips a booking email with no parseable itinerary', () => {

@@ -56,7 +56,9 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
           <section className="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <p className="text-xs uppercase tracking-wide text-slate-500">Confirmation</p>
+              <p className="text-xs uppercase tracking-wide text-slate-500">
+                Confirmation{bookedVia ? ` (${AIRLINE_LABELS[bookedVia] ?? bookedVia})` : ''}
+              </p>
               <p className="mt-0.5 flex items-center gap-1.5 capitalize text-slate-200">
                 <span>{flight.confirmationNumber || '—'}</span>
                 {flight.confirmationNumber && (
@@ -64,6 +66,20 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
                 )}
               </p>
             </div>
+            {flight.partnerConfirmationNumber && (
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Confirmation ({AIRLINE_LABELS[operating] ?? operating})
+                </p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-slate-200">
+                  <span>{flight.partnerConfirmationNumber}</span>
+                  <CopyButton
+                    value={flight.partnerConfirmationNumber}
+                    label={`${AIRLINE_LABELS[operating] ?? operating} confirmation number`}
+                  />
+                </p>
+              </div>
+            )}
             {flight.cabin && flight.cabin !== Cabin.Unknown ? (
               <Detail label="Cabin" value={CABIN_LABELS[flight.cabin]} />
             ) : (

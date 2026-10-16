@@ -1,6 +1,7 @@
 import { AIRLINE_LABELS, Airline, CABIN_LABELS, Cabin } from '../models/common.js';
 import type { Airport, Flight, FlightSegment } from '../models/Flight.js';
 import { operatingAirline } from '../models/Flight.js';
+import { formatAirportCity, formatAirportName } from '../data/airports.js';
 
 /** One tracked flight plus the traveler it belongs to. */
 export interface ItineraryFlight {
@@ -91,9 +92,9 @@ function formatDuration(minutes: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-/** "Chicago O'Hare (ORD)" when a name is known, otherwise just "ORD". */
-function formatAirport(airport: Airport): string {
-  return airport.name ? `${airport.name} (${airport.code})` : airport.code;
+/** Spelled-out airport with its code after: "Chicago, IL – O'Hare International Airport (ORD)". */
+function airportLabel(airport: Airport): string {
+  return formatAirportName(airport.code, airport.name);
 }
 
 /** "11:55 AM" or, when the arrival is on another day, "Wed, Jan 13 at 5:03 AM". */
@@ -111,7 +112,7 @@ function carrierName(flight: Flight): string {
 interface Journey {
   flight: Flight;
   passengers: string[];
-  confirmations: { number: string; passengers: string[] }[];
+  confirmations: { number: string; partner?: string; passengers: string[] }[];
 }
 
 /**
@@ -132,6 +133,10 @@ function groupJourneys(inputs: ItineraryFlight[]): Journey[] {
     if (!journey) {
       journey = { flight, passengers: [], confirmations: [] };
       byLeg.set(key, journey);
+    } else if (!journey.flight.segments?.length && flight.segments?.length) {
+      // Travelers on one flight can be at different stages of an import; show
+      // the record that knows the flight numbers.
+      journey.flight = flight;
     }
     if (!journey.passengers.includes(passengerName)) journey.passengers.push(passengerName);
 
@@ -142,6 +147,7 @@ function groupJourneys(inputs: ItineraryFlight[]): Journey[] {
         conf = { number, passengers: [] };
         journey.confirmations.push(conf);
       }
+      conf.partner ??= flight.partnerConfirmationNumber?.trim() || undefined;
       if (!conf.passengers.includes(passengerName)) conf.passengers.push(passengerName);
     }
   }
@@ -179,10 +185,11 @@ function describeJourney(journey: Journey, heading: string, allPassengers: strin
   if (departs) lines.push(formatDay(departs));
   lines.push(carrierName(flight));
 
-  // A nonstop's flight number rides on the route line; a connection lists each
-  // segment's flight number in the breakdown below instead.
-  const nonstopNumber = !isConnection && segments[0]!.flightNumber ? ` (${segments[0]!.flightNumber})` : '';
-  lines.push(`${formatAirport(flight.route.origin)} → ${formatAirport(flight.route.destination)}${nonstopNumber}`);
+  // A nonstop's flight number goes up front; a connection lists the number of
+  // every segment in the breakdown below instead.
+  if (!isConnection && segments[0]!.flightNumber) lines.push(`Flight: ${segments[0]!.flightNumber}`);
+  lines.push(`From: ${airportLabel(flight.route.origin)}`);
+  lines.push(`To: ${airportLabel(flight.route.destination)}`);
   if (departs) lines.push(`Departs: ${formatTime(departs)}`);
   if (arrives && departs) lines.push(`Arrives: ${formatEndpoint(arrives, departs)}`);
   if (flight.durationMinutes != null && flight.durationMinutes > 0) {
@@ -190,14 +197,19 @@ function describeJourney(journey: Journey, heading: string, allPassengers: strin
   }
 
   if (isConnection) {
-    const stopCodes = segments.slice(0, -1).map((s) => s.destination.code);
-    lines.push(`Stops: ${stopCodes.length} (${stopCodes.join(', ')})`);
+    const stops = segments.slice(0, -1).map((s) => formatAirportCity(s.destination.code, s.destination.name));
+    lines.push(`Stops: ${stops.length} – ${stops.join(', ')}`);
     lines.push('Connection details:');
     segments.forEach((segment, i) => {
       const dep = parseLocal(segment.departureDateTime);
       const arr = parseLocal(segment.arrivalDateTime);
-      const label = segment.flightNumber ? `${segment.flightNumber}: ` : '';
-      lines.push(`${i + 1}. ${label}${segment.origin.code} → ${segment.destination.code}`);
+      lines.push(
+        segment.flightNumber
+          ? `${i + 1}. Flight ${segment.flightNumber}`
+          : `${i + 1}. ${segment.origin.code} → ${segment.destination.code}`,
+      );
+      lines.push(`   From: ${airportLabel(segment.origin)}`);
+      lines.push(`   To: ${airportLabel(segment.destination)}`);
       if (dep) {
         const arrival = arr ? ` · Arrives ${formatEndpoint(arr, dep)}` : '';
         lines.push(`   Departs ${formatTime(dep)}${arrival}`);
@@ -205,7 +217,10 @@ function describeJourney(journey: Journey, heading: string, allPassengers: strin
       const nextDep = parseLocal(segments[i + 1]?.departureDateTime);
       if (arr && nextDep) {
         const layover = minutesBetween(arr, nextDep);
-        if (layover > 0) lines.push(`   Layover in ${segment.destination.code}: ${formatDuration(layover)}`);
+        if (layover > 0) {
+          const where = formatAirportCity(segment.destination.code, segment.destination.name);
+          lines.push(`   Layover in ${where}: ${formatDuration(layover)}`);
+        }
       }
     });
   }
@@ -216,17 +231,40 @@ function describeJourney(journey: Journey, heading: string, allPassengers: strin
   const everyoneFlies = allPassengers.every((p) => journey.passengers.includes(p));
   if (!everyoneFlies) lines.push(`Travelers: ${journey.passengers.join(', ')}`);
 
-  if (includeConfirmation && journey.confirmations.length > 0) {
-    const bookedVia = operatingAirline(flight) !== flight.airline ? ` (booked via ${AIRLINE_LABELS[flight.airline] ?? flight.airline})` : '';
-    if (journey.confirmations.length === 1) {
-      lines.push(`Confirmation: ${journey.confirmations[0]!.number}${bookedVia}`);
-    } else {
-      const each = journey.confirmations.map((c) => `${c.number} (${c.passengers.join(', ')})`).join('; ');
-      lines.push(`Confirmations: ${each}${bookedVia}`);
-    }
-  }
+  if (includeConfirmation) lines.push(...confirmationLines(journey));
 
   return lines;
+}
+
+/**
+ * Booking references for a journey. When a flight is booked through one
+ * airline's program but flown by another (e.g. Aeroplan on United), the
+ * traveler needs BOTH codes: the operating airline's own reference for its
+ * check-in and agents (listed first), and the booking program's.
+ */
+function confirmationLines(journey: Journey): string[] {
+  const { flight, confirmations } = journey;
+  if (confirmations.length === 0) return [];
+
+  const flownBy = carrierName(flight);
+  const bookedWith = AIRLINE_FULL_NAMES[flight.airline] ?? AIRLINE_LABELS[flight.airline] ?? flight.airline;
+  const viaPartner = operatingAirline(flight) !== flight.airline;
+
+  if (confirmations.length === 1) {
+    const conf = confirmations[0]!;
+    if (conf.partner) {
+      return [`${flownBy} confirmation: ${conf.partner}`, `${bookedWith} confirmation: ${conf.number}`];
+    }
+    return [`Confirmation: ${conf.number}${viaPartner ? ` (booked via ${bookedWith})` : ''}`];
+  }
+
+  const each = confirmations
+    .map((c) => {
+      const codes = c.partner ? `${c.number} / ${flownBy} ${c.partner}` : c.number;
+      return `${codes} (${c.passengers.join(', ')})`;
+    })
+    .join('; ');
+  return [`Confirmations: ${each}${viaPartner ? ` (booked via ${bookedWith})` : ''}`];
 }
 
 /**

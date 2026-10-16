@@ -18,3 +18,4 @@ export { exportFlightsToCsv } from './utils/csv.js';
 export type { ExportRow } from './utils/csv.js';
 export { buildItinerary } from './utils/itinerary.js';
 export type { ItineraryFlight, ItineraryOptions } from './utils/itinerary.js';
+export { formatAirportCity, formatAirportName, lookupAirport } from './data/airports.js';

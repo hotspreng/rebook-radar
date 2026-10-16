@@ -189,13 +189,16 @@ function mergeTrip(prev: RetrievedTrip | undefined, next: RetrievedTrip | undefi
   if (!prev) return next;
   if (!next) return prev;
   return {
+    airline: next.airline ?? prev.airline,
     confirmationNumber: next.confirmationNumber || prev.confirmationNumber,
+    partnerConfirmationNumber: next.partnerConfirmationNumber ?? prev.partnerConfirmationNumber,
     passengerNames: next.passengerNames.length ? next.passengerNames : prev.passengerNames,
     origin: next.origin || prev.origin,
     destination: next.destination || prev.destination,
     departureDateTime: next.departureDateTime || prev.departureDateTime,
     arrivalDateTime: next.arrivalDateTime ?? prev.arrivalDateTime,
     durationMinutes: next.durationMinutes ?? prev.durationMinutes,
+    segments: next.segments ?? prev.segments,
     fareType: next.fareType || prev.fareType,
     cabin: next.cabin ?? prev.cabin,
     purchaseType: next.purchaseType ?? prev.purchaseType,

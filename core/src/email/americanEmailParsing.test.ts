@@ -112,7 +112,12 @@ test('parseAmericanEmail parses a real trip confirmation (route, date, fare, pas
   assert.equal(trip.destination, 'OGG');
   assert.equal(trip.departureDateTime, '2027-01-07T11:55:00');
   assert.equal(trip.arrivalDateTime, '2027-01-07T17:40:00');
-  assert.equal(trip.segments, undefined); // single non-stop
+  // A nonstop now keeps its single operated segment so the flight number
+  // survives (previously segments were only stored for connections).
+  assert.equal(trip.segments?.length, 1);
+  assert.equal(trip.segments?.[0]?.flightNumber, 'AA 89');
+  assert.equal(trip.segments?.[0]?.origin, 'ORD');
+  assert.equal(trip.segments?.[0]?.destination, 'OGG');
   assert.equal(trip.cabin, Cabin.Economy);
   assert.equal(trip.purchaseType, PurchaseType.Cash);
   assert.equal(trip.paidCashUsd, 273.1); // 238.16 fare + 34.94 taxes

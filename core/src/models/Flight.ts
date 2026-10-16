@@ -57,6 +57,13 @@ export interface Flight {
   airline: Airline;
 
   confirmationNumber: string;
+  /**
+   * The operating partner's own booking reference when this booking was made
+   * through a different airline's program (e.g. the "United Airlines booking
+   * reference" on an Air Canada/Aeroplan confirmation). Distinct from
+   * {@link confirmationNumber}, which is the booking program's own code.
+   */
+  partnerConfirmationNumber?: string;
   route: Route;
   /** Departure date/time in the origin's local time zone (ISO-8601). */
   departureDateTime: IsoDateTime;
@@ -65,7 +72,7 @@ export interface Flight {
   /** Total scheduled travel time in minutes, when known. */
   durationMinutes?: number;
 
-  /** Operated segments for this direction (present when there is a connection). */
+  /** Operated segments for this direction, including a single one for a nonstop. */
   segments?: FlightSegment[];
 
   fareType: FareType;

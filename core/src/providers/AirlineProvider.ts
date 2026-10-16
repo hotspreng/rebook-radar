@@ -18,6 +18,13 @@ export interface RetrievedTrip {
   /** Airline this trip is booked on, when known. */
   airline?: Airline;
   confirmationNumber: string;
+  /**
+   * The operating partner's own booking reference, when the booking was made
+   * through a different airline's program — e.g. the "United Airlines booking
+   * reference" printed on an Air Canada (Aeroplan) confirmation. It is the code
+   * the traveler needs at the operating airline's own check-in and agents.
+   */
+  partnerConfirmationNumber?: string;
   passengerNames: string[];
   origin: string;
   destination: string;

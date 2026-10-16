@@ -42,6 +42,27 @@ function parseConfirmationNumber(subject: string, body: string): string | undefi
   return issued?.[1]?.toUpperCase();
 }
 
+/**
+ * The operating partner's own booking reference, e.g. "United Airlines booking
+ * reference: DSPJ1F". Air Canada prints it either on one line or split across
+ * three (carrier name / "booking reference:" / code), and it is the code the
+ * traveler needs at the partner's own check-in. References labelled with Air
+ * Canada's own name are the primary confirmation, not a partner's.
+ */
+function parsePartnerReference(body: string): string | undefined {
+  const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i]!.match(/^(?:(.+?)\s+)?booking reference:?\s*([A-Z0-9]{6})?$/i);
+    if (!m) continue;
+    // Carrier is on this line (inline layout) or the one above (split layout).
+    const carrier = (m[1] ?? lines[i - 1] ?? '').trim();
+    if (!carrier || /air canada|^your$/i.test(carrier)) continue;
+    const code = m[2] ?? lines[i + 1]?.match(/^([A-Z0-9]{6})$/)?.[1];
+    if (code) return code.toUpperCase();
+  }
+  return undefined;
+}
+
 const MONTHS: Record<string, string> = {
   jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
   jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
@@ -343,6 +364,7 @@ function parseTrip(body: string, confirmationNumber: string): RetrievedTrip | un
   return {
     airline: Airline.AirCanada,
     confirmationNumber,
+    partnerConfirmationNumber: parsePartnerReference(body),
     passengerNames,
     origin: first.origin,
     destination: first.destination,

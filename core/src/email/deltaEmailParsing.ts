@@ -364,7 +364,7 @@ function parseDeltaTripDetails(body: string, confirmationNumber: string): Retrie
     destination,
     departureDateTime,
     arrivalDateTime,
-    segments: segments && segments.length > 1 ? segments : undefined,
+    segments,
     fareType: FareType.Unknown,
     cabin: parseDeltaCabin(body),
     purchaseType: pricing.purchaseType,

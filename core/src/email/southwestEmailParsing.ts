@@ -229,9 +229,9 @@ function parseLeg(text: string, subject: string): RetrievedTripLeg | undefined {
     departureDateTime,
     arrivalDateTime: parseArrivalDateTime(text, departureDateTime),
     durationMinutes: parseTravelTime(text),
-    // Only attach segments when there is an actual connection; a non-stop leg
-    // is fully described by origin/destination already.
-    segments: segments.length >= 2 ? segments : undefined,
+    // Always attach the operated segments, including a single non-stop one, so
+    // the flight number is kept; a connection is simply more than one entry.
+    segments: segments.length >= 1 ? segments : undefined,
   };
 }
 

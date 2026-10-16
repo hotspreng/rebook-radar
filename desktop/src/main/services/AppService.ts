@@ -904,6 +904,7 @@ export class AppService {
     };
     return {
       ...existing,
+      partnerConfirmationNumber: trip.partnerConfirmationNumber ?? existing.partnerConfirmationNumber,
       route: {
         origin: { code: trip.origin || existing.route.origin.code, name: existing.route.origin.name },
         destination: {
@@ -917,7 +918,8 @@ export class AppService {
       // groupSegmentsIntoLegs); don't fall back to a stale single-segment
       // value left over from before a parser fix corrected the route (e.g. a
       // connection that used to be mis-parsed as only its first leg).
-      durationMinutes: trip.durationMinutes ?? (segments ? undefined : existing.durationMinutes),
+      durationMinutes:
+        trip.durationMinutes ?? (segments && segments.length > 1 ? undefined : existing.durationMinutes),
       segments: segments ?? existing.segments,
       fareType: trip.fareType ?? existing.fareType,
       cabin: trip.cabin ?? existing.cabin,
@@ -1098,6 +1100,7 @@ export class AppService {
       accountId: undefined,
       airline: trip.airline ?? Airline.Southwest,
       confirmationNumber: trip.confirmationNumber,
+      partnerConfirmationNumber: trip.partnerConfirmationNumber,
       route: {
         origin: { code: trip.origin },
         destination: { code: trip.destination },

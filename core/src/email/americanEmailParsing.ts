@@ -362,7 +362,7 @@ function groupFlightsIntoLegs(flights: ParsedFlight[]): RetrievedTripLeg[] {
       destination: last.destination,
       departureDateTime: `${first.date}T${first.departureTime}:00`,
       arrivalDateTime: `${lastArrivalDate}T${last.arrivalTime}:00`,
-      segments: segments.length > 1 ? segments : undefined,
+      segments,
     };
   });
 }
