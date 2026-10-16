@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Sidebar, type Route } from './components/Sidebar.js';
 import { Dashboard } from './components/Dashboard.js';
 import { PastFlightsPage } from './components/PastFlightsPage.js';
+import { ItineraryPage } from './components/ItineraryPage.js';
 import { ReportingPage } from './components/ReportingPage.js';
 import { TrendsPage } from './components/TrendsPage.js';
 import { ReviewQueuePage } from './components/ReviewQueuePage.js';
@@ -38,6 +39,7 @@ export default function App(): JSX.Element {
         ) : (
           <>
             {route === 'dashboard' && <Dashboard />}
+            {route === 'itinerary' && <ItineraryPage />}
             {route === 'past' && <PastFlightsPage />}
             {route === 'reporting' && <ReportingPage />}
             {route === 'trends' && <TrendsPage />}

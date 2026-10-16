@@ -42,6 +42,16 @@ export enum Cabin {
   Unknown = 'unknown',
 }
 
+/** Display name for a {@link Cabin}. */
+export const CABIN_LABELS: Record<Cabin, string> = {
+  [Cabin.BasicEconomy]: 'Basic Economy',
+  [Cabin.Economy]: 'Economy',
+  [Cabin.PremiumEconomy]: 'Premium Economy',
+  [Cabin.Business]: 'Business',
+  [Cabin.First]: 'First',
+  [Cabin.Unknown]: 'Unknown',
+};
+
 /** The system's recommendation after comparing prices. */
 export enum Recommendation {
   Rebook = 'rebook',

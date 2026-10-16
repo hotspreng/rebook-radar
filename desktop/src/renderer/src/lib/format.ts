@@ -2,7 +2,6 @@ import {
   FlightSource,
   PurchaseType,
   Recommendation,
-  type Cabin,
   type FareType,
   type Flight,
 } from '@swr/core';
@@ -86,14 +85,7 @@ export const FARE_LABELS: Record<FareType, string> = {
   unknown: 'Unknown',
 };
 
-export const CABIN_LABELS: Record<Cabin, string> = {
-  basic_economy: 'Basic Economy',
-  economy: 'Economy',
-  premium_economy: 'Premium Economy',
-  business: 'Business',
-  first: 'First',
-  unknown: 'Unknown',
-};
+export { CABIN_LABELS } from '@swr/core';
 
 export const RECOMMENDATION_LABELS: Record<Recommendation, string> = {
   rebook: 'Rebook',
