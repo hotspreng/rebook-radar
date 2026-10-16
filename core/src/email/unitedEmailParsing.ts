@@ -79,7 +79,7 @@ function parsePnrFromSubject(subject: string): string | undefined {
   // "… for Confirmation P0B0FE", "booking confirmation – P0B0FE".
   const labeled = subject.match(/confirmation\s*(?:number)?\s*[–\-:]?\s*([A-Z0-9]{6})\b/i);
   if (labeled) return labeled[1]!.toUpperCase();
-  const trailing = subject.match(/[–\-]\s*([A-Z0-9]{6})\b/);
+  const trailing = subject.match(/[–-]\s*([A-Z0-9]{6})\b/);
   if (trailing) return trailing[1]!.toUpperCase();
   // Last resort (e.g. cancellation subjects): a standalone 6-char record
   // locator. Require BOTH a letter and a digit and skip flight numbers

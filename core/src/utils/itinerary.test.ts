@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { Airline, Cabin, FareType, FlightSource, PurchaseType } from '../models/common.js';
 import type { Flight } from '../models/Flight.js';
-import { buildItinerary } from './itinerary.js';
+import { buildItinerary, buildItineraryHtml } from './itinerary.js';
 
 function makeFlight(overrides: Partial<Flight> = {}): Flight {
   return {
@@ -249,4 +249,86 @@ test('three or more flights are numbered', () => {
 
 test('no flights yields an empty itinerary', () => {
   assert.equal(buildItinerary([]), '');
+  assert.equal(buildItineraryHtml([]), '');
+});
+
+/** A connection booked through a partner program: the richest case for the HTML view. */
+function partnerConnection(): { flight: Flight; passengerName: string } {
+  return {
+    passengerName: 'Emily Sprenger',
+    flight: makeFlight({
+      airline: Airline.AirCanada,
+      confirmationNumber: '2K4C2W',
+      partnerConfirmationNumber: 'PMF5D6',
+      route: { origin: { code: 'ITH' }, destination: { code: 'ORD' } },
+      departureDateTime: '2026-12-15T20:10:00',
+      arrivalDateTime: '2026-12-15T23:29:00',
+      segments: [
+        {
+          origin: { code: 'ITH' },
+          destination: { code: 'IAD' },
+          departureDateTime: '2026-12-15T20:10:00',
+          arrivalDateTime: '2026-12-15T21:30:00',
+          flightNumber: 'UA 4954',
+        },
+        {
+          origin: { code: 'IAD' },
+          destination: { code: 'ORD' },
+          departureDateTime: '2026-12-15T22:15:00',
+          arrivalDateTime: '2026-12-15T23:29:00',
+          flightNumber: 'UA 421',
+        },
+      ],
+    }),
+  };
+}
+
+test('the formatted version carries the same content as the plain text', () => {
+  const inputs = [outbound('Joshua Sprenger', 'a'), ret('Joshua Sprenger', 'b')];
+  const html = buildItineraryHtml(inputs);
+  assert.match(html, /OUTBOUND JOURNEY/);
+  assert.match(html, /RETURN JOURNEY/);
+  assert.match(html, /Thursday, January 7, 2027/);
+  assert.match(html, />AA 89</);
+  // Apostrophes are escaped in HTML, so compare against the escaped form.
+  assert.match(html, /Chicago, IL – O&#39;Hare International Airport \(ORD\)/);
+  assert.match(html, /Departs/);
+  assert.match(html, />QDFZSJ</);
+  assert.match(html, /Flight Itinerary/);
+});
+
+test('the formatted version of a partner connection lists both codes and every segment', () => {
+  const html = buildItineraryHtml([partnerConnection()]);
+  assert.match(html, /United Airlines confirmation/);
+  assert.match(html, />PMF5D6</);
+  assert.match(html, /Air Canada confirmation/);
+  assert.match(html, />2K4C2W</);
+  assert.match(html, /1\. Flight UA 4954/);
+  assert.match(html, /2\. Flight UA 421/);
+  assert.match(html, /Layover in Washington, DC \(IAD\): 45m/);
+  assert.ok(html.indexOf('United Airlines confirmation') < html.indexOf('Air Canada confirmation'));
+});
+
+test('the formatted version honors the confirmation toggle and never shows prices', () => {
+  const inputs = [outbound('Joshua Sprenger', 'a')];
+  const without = buildItineraryHtml(inputs, { includeConfirmation: false });
+  assert.doesNotMatch(without, /QDFZSJ|onfirmation/);
+  assert.doesNotMatch(buildItineraryHtml(inputs), /\$|273|points|pts/i);
+});
+
+test('the formatted version escapes markup in names and airport data', () => {
+  const evil = outbound('Bob <script>alert(1)</script> & "Co"', 'a');
+  evil.flight.route = { origin: { code: 'ZZA', name: '<img src=x onerror=alert(1)>' }, destination: { code: 'ZZB' } };
+  const html = buildItineraryHtml([evil]);
+  assert.doesNotMatch(html, /<script|<img/i);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /&amp; &quot;Co&quot;/);
+});
+
+test('the formatted version is self-contained email-safe markup', () => {
+  const html = buildItineraryHtml([partnerConnection()]);
+  // Inline styles only: no stylesheet, script, external asset or class hooks.
+  assert.doesNotMatch(html, /<style|<script|<link|<img|class=|https?:\/\//i);
+  assert.match(html, /<table/);
 });

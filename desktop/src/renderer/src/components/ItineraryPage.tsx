@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AIRLINE_LABELS, buildItinerary, operatingAirline } from '@swr/core';
+import { AIRLINE_LABELS, buildItinerary, buildItineraryHtml, operatingAirline } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
 import { ArrowRight, Check, Copy, FileText, Search, Wand2, X } from 'lucide-react';
 import { Button, Card, inputClass } from './ui.js';
@@ -42,7 +42,11 @@ export function ItineraryPage(): JSX.Element {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
   const [includeConfirmation, setIncludeConfirmation] = useState(true);
+  // 'formatted' copies rich text (headings, colors, tables) that keeps its look
+  // when pasted into an email; 'text' is plain and editable.
+  const [format, setFormat] = useState<'formatted' | 'text'>('formatted');
   const [text, setText] = useState('');
+  const [html, setHtml] = useState('');
   const [generated, setGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -82,15 +86,21 @@ export function ItineraryPage(): JSX.Element {
     });
   }
 
-  function build(withConfirmation: boolean): string {
-    const inputs = rows
+  function selectedInputs(): { flight: FlightWithComparison['flight']; passengerName: string }[] {
+    return rows
       .filter((row) => selected.has(row.key))
       .flatMap((row) => row.items.map((i) => ({ flight: i.flight, passengerName: i.passengerName })));
-    return buildItinerary(inputs, { includeConfirmation: withConfirmation });
+  }
+
+  /** Build both versions from the same selection so they can never disagree. */
+  function build(withConfirmation: boolean): void {
+    const inputs = selectedInputs();
+    setText(buildItinerary(inputs, { includeConfirmation: withConfirmation }));
+    setHtml(buildItineraryHtml(inputs, { includeConfirmation: withConfirmation }));
   }
 
   function handleCreate(): void {
-    setText(build(includeConfirmation));
+    build(includeConfirmation);
     setGenerated(true);
     setCopied(false);
   }
@@ -98,21 +108,35 @@ export function ItineraryPage(): JSX.Element {
   function handleToggleConfirmation(value: boolean): void {
     setIncludeConfirmation(value);
     // Rebuild only if one has been made; this replaces any manual edits.
-    if (generated) setText(build(value));
+    if (generated) build(value);
   }
 
   function handleClear(): void {
     setSelected(new Set());
     setText('');
+    setHtml('');
     setGenerated(false);
     setCopied(false);
   }
 
   async function handleCopy(): Promise<void> {
     try {
-      await navigator.clipboard.writeText(text);
+      if (format === 'formatted' && typeof ClipboardItem !== 'undefined') {
+        // Offer both flavors: mail composers take the rich one, and anything
+        // that only understands text (a plain-text email, a chat box) gets the
+        // plain version of the same itinerary.
+        const plain = buildItinerary(selectedInputs(), { includeConfirmation });
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([plain], { type: 'text/plain' }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
       setCopied(true);
-      pushToast('success', 'Itinerary copied to clipboard');
+      pushToast('success', format === 'formatted' ? 'Formatted itinerary copied' : 'Itinerary copied to clipboard');
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
       pushToast('error', 'Could not copy the itinerary');
@@ -207,32 +231,67 @@ export function ItineraryPage(): JSX.Element {
           </Card>
         </div>
 
-        <div className="flex w-[440px] shrink-0 flex-col gap-3">
+        <div className="flex w-[520px] shrink-0 flex-col gap-3">
           {generated ? (
             <>
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 text-sm text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={includeConfirmation}
-                    onChange={(e) => handleToggleConfirmation(e.target.checked)}
-                  />
-                  Include confirmation numbers
-                </label>
+              <div className="flex items-center justify-between gap-3">
+                <div
+                  role="group"
+                  aria-label="Itinerary format"
+                  className="inline-flex rounded-lg border border-slate-700 p-0.5 text-sm"
+                >
+                  {(['formatted', 'text'] as const).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => {
+                        setFormat(f);
+                        setCopied(false);
+                      }}
+                      aria-pressed={format === f}
+                      className={`rounded-md px-3 py-1 font-medium transition-colors ${
+                        format === f ? 'bg-brand-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {f === 'formatted' ? 'Formatted' : 'Plain text'}
+                    </button>
+                  ))}
+                </div>
                 <Button onClick={() => void handleCopy()}>
                   {copied ? <Check size={16} /> : <Copy size={16} />}
-                  {copied ? 'Copied' : 'Copy'}
+                  {copied ? 'Copied' : format === 'formatted' ? 'Copy formatted' : 'Copy'}
                 </Button>
               </div>
-              <textarea
-                className={`${inputClass} min-h-0 flex-1 resize-none font-mono text-[13px] leading-relaxed`}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                spellCheck={false}
-                aria-label="Itinerary text"
-              />
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={includeConfirmation}
+                  onChange={(e) => handleToggleConfirmation(e.target.checked)}
+                />
+                Include confirmation numbers
+              </label>
+              {format === 'formatted' ? (
+                // Rendered on white because that is how it will look in an email.
+                // The markup is generated by buildItineraryHtml, which escapes
+                // every piece of stored text.
+                <div
+                  className="min-h-0 flex-1 overflow-auto rounded-lg bg-white p-4"
+                  aria-label="Formatted itinerary preview"
+                  dangerouslySetInnerHTML={{ __html: html }}
+                />
+              ) : (
+                <textarea
+                  className={`${inputClass} min-h-0 flex-1 resize-none font-mono text-[13px] leading-relaxed`}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  spellCheck={false}
+                  aria-label="Itinerary text"
+                />
+              )}
               <p className="text-[11px] text-slate-500">
-                You can edit the text before copying. Prices are never included.
+                {format === 'formatted'
+                  ? 'Paste into your email to keep the headings and layout. Switch to Plain text to edit the wording. Prices are never included.'
+                  : 'You can edit the text before copying. Prices are never included.'}
               </p>
             </>
           ) : (

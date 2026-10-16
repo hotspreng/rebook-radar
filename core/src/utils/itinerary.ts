@@ -173,67 +173,43 @@ function segmentsOf(flight: Flight): FlightSegment[] {
   ];
 }
 
-function describeJourney(journey: Journey, heading: string, allPassengers: string[], includeConfirmation: boolean): string[] {
-  const { flight } = journey;
-  const lines: string[] = [heading];
+interface Field {
+  label: string;
+  value: string;
+}
 
-  const departs = parseLocal(flight.departureDateTime);
-  const arrives = parseLocal(flight.arrivalDateTime);
-  const segments = segmentsOf(flight);
-  const isConnection = segments.length > 1;
+/** One operated flight inside a connection. */
+interface SegmentView {
+  /** "Flight UA 4954", or "ITH → IAD" when the number is unknown. */
+  title: string;
+  from: string;
+  to: string;
+  /** "Departs 8:10 PM · Arrives 9:30 PM" */
+  times?: string;
+  /** "Layover in Washington, DC (IAD): 45m" — shown after the segment. */
+  layover?: string;
+}
 
-  if (departs) lines.push(formatDay(departs));
-  lines.push(carrierName(flight));
+/** Everything printed for one journey, independent of output format. */
+interface JourneyView {
+  heading: string;
+  date?: string;
+  carrier: string;
+  /** Flight / From / To / Departs / Arrives / Duration. */
+  details: Field[];
+  /** "1 – Washington, DC (IAD)"; only for connections. */
+  stops?: string;
+  segments: SegmentView[];
+  /** Cabin and, for a partial party, Travelers. */
+  extras: Field[];
+  confirmations: Field[];
+}
 
-  // A nonstop's flight number goes up front; a connection lists the number of
-  // every segment in the breakdown below instead.
-  if (!isConnection && segments[0]!.flightNumber) lines.push(`Flight: ${segments[0]!.flightNumber}`);
-  lines.push(`From: ${airportLabel(flight.route.origin)}`);
-  lines.push(`To: ${airportLabel(flight.route.destination)}`);
-  if (departs) lines.push(`Departs: ${formatTime(departs)}`);
-  if (arrives && departs) lines.push(`Arrives: ${formatEndpoint(arrives, departs)}`);
-  if (flight.durationMinutes != null && flight.durationMinutes > 0) {
-    lines.push(`Duration: ${formatDuration(flight.durationMinutes)}`);
-  }
-
-  if (isConnection) {
-    const stops = segments.slice(0, -1).map((s) => formatAirportCity(s.destination.code, s.destination.name));
-    lines.push(`Stops: ${stops.length} – ${stops.join(', ')}`);
-    lines.push('Connection details:');
-    segments.forEach((segment, i) => {
-      const dep = parseLocal(segment.departureDateTime);
-      const arr = parseLocal(segment.arrivalDateTime);
-      lines.push(
-        segment.flightNumber
-          ? `${i + 1}. Flight ${segment.flightNumber}`
-          : `${i + 1}. ${segment.origin.code} → ${segment.destination.code}`,
-      );
-      lines.push(`   From: ${airportLabel(segment.origin)}`);
-      lines.push(`   To: ${airportLabel(segment.destination)}`);
-      if (dep) {
-        const arrival = arr ? ` · Arrives ${formatEndpoint(arr, dep)}` : '';
-        lines.push(`   Departs ${formatTime(dep)}${arrival}`);
-      }
-      const nextDep = parseLocal(segments[i + 1]?.departureDateTime);
-      if (arr && nextDep) {
-        const layover = minutesBetween(arr, nextDep);
-        if (layover > 0) {
-          const where = formatAirportCity(segment.destination.code, segment.destination.name);
-          lines.push(`   Layover in ${where}: ${formatDuration(layover)}`);
-        }
-      }
-    });
-  }
-
-  if (flight.cabin && flight.cabin !== Cabin.Unknown) lines.push(`Cabin: ${CABIN_LABELS[flight.cabin]}`);
-
-  // Only name travelers on a journey when it carries fewer than the whole party.
-  const everyoneFlies = allPassengers.every((p) => journey.passengers.includes(p));
-  if (!everyoneFlies) lines.push(`Travelers: ${journey.passengers.join(', ')}`);
-
-  if (includeConfirmation) lines.push(...confirmationLines(journey));
-
-  return lines;
+interface ItineraryView {
+  title: string;
+  htmlTitle: string;
+  travelers: string[];
+  journeys: JourneyView[];
 }
 
 /**
@@ -242,7 +218,7 @@ function describeJourney(journey: Journey, heading: string, allPassengers: strin
  * traveler needs BOTH codes: the operating airline's own reference for its
  * check-in and agents (listed first), and the booking program's.
  */
-function confirmationLines(journey: Journey): string[] {
+function confirmationFields(journey: Journey): Field[] {
   const { flight, confirmations } = journey;
   if (confirmations.length === 0) return [];
 
@@ -253,9 +229,12 @@ function confirmationLines(journey: Journey): string[] {
   if (confirmations.length === 1) {
     const conf = confirmations[0]!;
     if (conf.partner) {
-      return [`${flownBy} confirmation: ${conf.partner}`, `${bookedWith} confirmation: ${conf.number}`];
+      return [
+        { label: `${flownBy} confirmation`, value: conf.partner },
+        { label: `${bookedWith} confirmation`, value: conf.number },
+      ];
     }
-    return [`Confirmation: ${conf.number}${viaPartner ? ` (booked via ${bookedWith})` : ''}`];
+    return [{ label: 'Confirmation', value: `${conf.number}${viaPartner ? ` (booked via ${bookedWith})` : ''}` }];
   }
 
   const each = confirmations
@@ -264,7 +243,184 @@ function confirmationLines(journey: Journey): string[] {
       return `${codes} (${c.passengers.join(', ')})`;
     })
     .join('; ');
-  return [`Confirmations: ${each}${viaPartner ? ` (booked via ${bookedWith})` : ''}`];
+  return [{ label: 'Confirmations', value: `${each}${viaPartner ? ` (booked via ${bookedWith})` : ''}` }];
+}
+
+function describeJourney(journey: Journey, heading: string, allPassengers: string[], includeConfirmation: boolean): JourneyView {
+  const { flight } = journey;
+  const departs = parseLocal(flight.departureDateTime);
+  const arrives = parseLocal(flight.arrivalDateTime);
+  const segments = segmentsOf(flight);
+  const isConnection = segments.length > 1;
+
+  const details: Field[] = [];
+  // A nonstop's flight number goes up front; a connection lists the number of
+  // every segment in the breakdown instead.
+  if (!isConnection && segments[0]!.flightNumber) details.push({ label: 'Flight', value: segments[0]!.flightNumber });
+  details.push({ label: 'From', value: airportLabel(flight.route.origin) });
+  details.push({ label: 'To', value: airportLabel(flight.route.destination) });
+  if (departs) details.push({ label: 'Departs', value: formatTime(departs) });
+  if (arrives && departs) details.push({ label: 'Arrives', value: formatEndpoint(arrives, departs) });
+  if (flight.durationMinutes != null && flight.durationMinutes > 0) {
+    details.push({ label: 'Duration', value: formatDuration(flight.durationMinutes) });
+  }
+
+  let stops: string | undefined;
+  const segmentViews: SegmentView[] = [];
+  if (isConnection) {
+    const stopNames = segments.slice(0, -1).map((s) => formatAirportCity(s.destination.code, s.destination.name));
+    stops = `${stopNames.length} – ${stopNames.join(', ')}`;
+    segments.forEach((segment, i) => {
+      const dep = parseLocal(segment.departureDateTime);
+      const arr = parseLocal(segment.arrivalDateTime);
+      const view: SegmentView = {
+        title: segment.flightNumber ? `Flight ${segment.flightNumber}` : `${segment.origin.code} → ${segment.destination.code}`,
+        from: airportLabel(segment.origin),
+        to: airportLabel(segment.destination),
+      };
+      if (dep) view.times = `Departs ${formatTime(dep)}${arr ? ` · Arrives ${formatEndpoint(arr, dep)}` : ''}`;
+      const nextDep = parseLocal(segments[i + 1]?.departureDateTime);
+      if (arr && nextDep) {
+        const layover = minutesBetween(arr, nextDep);
+        if (layover > 0) {
+          const where = formatAirportCity(segment.destination.code, segment.destination.name);
+          view.layover = `Layover in ${where}: ${formatDuration(layover)}`;
+        }
+      }
+      segmentViews.push(view);
+    });
+  }
+
+  const extras: Field[] = [];
+  if (flight.cabin && flight.cabin !== Cabin.Unknown) extras.push({ label: 'Cabin', value: CABIN_LABELS[flight.cabin] });
+  // Only name travelers on a journey when it carries fewer than the whole party.
+  const everyoneFlies = allPassengers.every((p) => journey.passengers.includes(p));
+  if (!everyoneFlies) extras.push({ label: 'Travelers', value: journey.passengers.join(', ') });
+
+  return {
+    heading,
+    date: departs ? formatDay(departs) : undefined,
+    carrier: carrierName(flight),
+    details,
+    stops,
+    segments: segmentViews,
+    extras,
+    confirmations: includeConfirmation ? confirmationFields(journey) : [],
+  };
+}
+
+function buildView(inputs: ItineraryFlight[], options: ItineraryOptions): ItineraryView | undefined {
+  const journeys = groupJourneys(inputs);
+  if (journeys.length === 0) return undefined;
+
+  const includeConfirmation = options.includeConfirmation ?? true;
+  const travelers: string[] = [];
+  for (const journey of journeys) {
+    for (const name of journey.passengers) if (!travelers.includes(name)) travelers.push(name);
+  }
+
+  return {
+    title: options.title ?? 'FLIGHT ITINERARY',
+    htmlTitle: options.title ?? 'Flight Itinerary',
+    travelers,
+    journeys: journeys.map((journey, index) =>
+      describeJourney(journey, journeyHeading(index, journeys.length), travelers, includeConfirmation),
+    ),
+  };
+}
+
+function renderText(view: ItineraryView): string {
+  const lines: string[] = [view.title, `Travelers: ${view.travelers.join(', ')}`];
+
+  for (const j of view.journeys) {
+    lines.push('', j.heading);
+    if (j.date) lines.push(j.date);
+    lines.push(j.carrier);
+    for (const f of j.details) lines.push(`${f.label}: ${f.value}`);
+    if (j.stops) lines.push(`Stops: ${j.stops}`);
+    if (j.segments.length > 0) {
+      lines.push('Connection details:');
+      j.segments.forEach((s, i) => {
+        lines.push(`${i + 1}. ${s.title}`, `   From: ${s.from}`, `   To: ${s.to}`);
+        if (s.times) lines.push(`   ${s.times}`);
+        if (s.layover) lines.push(`   ${s.layover}`);
+      });
+    }
+    for (const f of [...j.extras, ...j.confirmations]) lines.push(`${f.label}: ${f.value}`);
+  }
+
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+
+/** Escape text for safe inclusion in HTML (names and airport data are user/email sourced). */
+function esc(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const NAVY = '#12355b';
+const FONT = "font-family:'Segoe UI',Helvetica,Arial,sans-serif;";
+
+/** One label/value row of a journey's detail table. */
+function htmlRow(label: string, value: string, emphasize = false): string {
+  const valueStyle = emphasize
+    ? "padding:3px 0;font-weight:700;font-family:Consolas,'Courier New',monospace;letter-spacing:0.5px;color:#1f2933"
+    : 'padding:3px 0;color:#1f2933';
+  return (
+    `<tr><td width="120" valign="top" style="padding:3px 12px 3px 0;color:#6b7785">${esc(label)}</td>` +
+    `<td valign="top" style="${valueStyle}">${esc(value)}</td></tr>`
+  );
+}
+
+function htmlSegment(s: SegmentView, index: number): string {
+  const parts = [
+    `<div style="font-weight:700;color:${NAVY}">${index + 1}. ${esc(s.title)}</div>`,
+    `<div><span style="color:#6b7785">From:</span> ${esc(s.from)}</div>`,
+    `<div><span style="color:#6b7785">To:</span> ${esc(s.to)}</div>`,
+  ];
+  if (s.times) parts.push(`<div style="color:#52606d">${esc(s.times)}</div>`);
+  if (s.layover) parts.push(`<div style="color:#b45309;margin-top:2px">${esc(s.layover)}</div>`);
+  return (
+    `<div style="background:#f4f7fa;border-left:3px solid ${NAVY};padding:8px 12px;margin:8px 0">` +
+    `${parts.join('')}</div>`
+  );
+}
+
+function htmlJourney(j: JourneyView): string {
+  const rows = j.details.map((f) => htmlRow(f.label, f.value));
+  if (j.stops) rows.push(htmlRow('Stops', j.stops));
+
+  const detailsTable = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table>`;
+  const segments = j.segments.length > 0 ? j.segments.map(htmlSegment).join('') : '';
+  const extraRows = [
+    ...j.extras.map((f) => htmlRow(f.label, f.value)),
+    ...j.confirmations.map((f) => htmlRow(f.label, f.value, true)),
+  ];
+  const footer = extraRows.length > 0
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;border-top:1px solid #e4e9ef"><tr><td style="padding-top:8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${extraRows.join('')}</table></td></tr></table>`
+    : '';
+
+  return (
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #d3dce6;border-collapse:collapse;margin:0 0 16px">` +
+    `<tr><td bgcolor="${NAVY}" style="background:${NAVY};color:#ffffff;padding:9px 14px;font-size:12px;font-weight:700;letter-spacing:1px">${esc(j.heading)}</td>` +
+    `<td bgcolor="${NAVY}" align="right" style="background:${NAVY};color:#cfe0f3;padding:9px 14px;font-size:13px">${esc(j.date ?? '')}</td></tr>` +
+    `<tr><td colspan="2" style="padding:12px 14px">` +
+    `<div style="font-size:16px;font-weight:700;color:${NAVY};margin:0 0 8px">${esc(j.carrier)}</div>` +
+    `${detailsTable}${segments}${footer}</td></tr></table>`
+  );
+}
+
+function renderHtml(view: ItineraryView): string {
+  return (
+    `<div style="${FONT}color:#1f2933;font-size:14px;line-height:1.45;max-width:600px">` +
+    `<div style="font-size:22px;font-weight:700;color:${NAVY};margin:0 0 4px">${esc(view.htmlTitle)}</div>` +
+    `<div style="color:#52606d;margin:0 0 16px"><strong style="color:#1f2933">Travelers:</strong> ${esc(view.travelers.join(', '))}</div>` +
+    `${view.journeys.map(htmlJourney).join('')}</div>`
+  );
 }
 
 /**
@@ -276,22 +432,17 @@ function confirmationLines(journey: Journey): string[] {
  * mail clients. Prices are deliberately omitted — this is meant to be shared.
  */
 export function buildItinerary(inputs: ItineraryFlight[], options: ItineraryOptions = {}): string {
-  const journeys = groupJourneys(inputs);
-  if (journeys.length === 0) return '';
+  const view = buildView(inputs, options);
+  return view ? renderText(view) : '';
+}
 
-  const includeConfirmation = options.includeConfirmation ?? true;
-  const allPassengers: string[] = [];
-  for (const journey of journeys) {
-    for (const name of journey.passengers) if (!allPassengers.includes(name)) allPassengers.push(name);
-  }
-
-  const lines: string[] = [options.title ?? 'FLIGHT ITINERARY'];
-  lines.push(`Travelers: ${allPassengers.join(', ')}`);
-
-  journeys.forEach((journey, index) => {
-    lines.push('');
-    lines.push(...describeJourney(journey, journeyHeading(index, journeys.length), allPassengers, includeConfirmation));
-  });
-
-  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+/**
+ * The same itinerary as formatted HTML — a fragment of inline-styled tables
+ * (no stylesheet, scripts or external assets) so it survives being pasted into
+ * Gmail, Outlook and Apple Mail. Content is identical to {@link buildItinerary};
+ * only the presentation differs. All text is HTML-escaped.
+ */
+export function buildItineraryHtml(inputs: ItineraryFlight[], options: ItineraryOptions = {}): string {
+  const view = buildView(inputs, options);
+  return view ? renderHtml(view) : '';
 }
