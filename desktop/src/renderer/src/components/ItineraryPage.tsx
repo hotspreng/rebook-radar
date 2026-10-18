@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AIRLINE_LABELS, HOTEL_PROVIDER_LABELS, RENTAL_PROVIDER_LABELS, buildItinerary, buildItineraryHtml, operatingAirline, suggestHotelStays, suggestRentalCars } from '@swr/core';
-import type { HotelStay, RentalCar } from '@swr/core';
+import { AIRLINE_LABELS, BUS_PROVIDER_LABELS, HOTEL_PROVIDER_LABELS, RENTAL_PROVIDER_LABELS, buildItinerary, buildItineraryHtml, busAirportDirection, operatingAirline, suggestBusRides, suggestHotelStays, suggestRentalCars } from '@swr/core';
+import type { BusRide, HotelStay, RentalCar } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
-import { ArrowRight, Car, Check, Copy, FileText, Hotel, Search, Wand2, X } from 'lucide-react';
+import { ArrowRight, Bus, Car, Check, Copy, FileText, Hotel, Search, Wand2, X } from 'lucide-react';
 import { Button, Card, inputClass } from './ui.js';
 import { formatDateTime, formatStayMoment } from '../lib/format.js';
 import { useAppStore } from '../store/useAppStore.js';
@@ -15,19 +15,23 @@ interface JourneyRow {
   items: FlightWithComparison[];
 }
 
-/** A flight row, hotel stay or car rental, listed together in date order. */
+/** A flight row, hotel stay, car rental or bus ride, listed together in date order. */
 type ListEntry =
   | { kind: 'flight'; key: string; sortKey: string; row: JourneyRow }
   | { kind: 'hotel'; key: string; sortKey: string; stay: HotelStay }
-  | { kind: 'car'; key: string; sortKey: string; car: RentalCar };
+  | { kind: 'car'; key: string; sortKey: string; car: RentalCar }
+  | { kind: 'bus'; key: string; sortKey: string; ride: BusRide };
 
 const hotelKey = (stay: HotelStay): string => `hotel:${stay.id}`;
 const carKey = (car: RentalCar): string => `car:${car.id}`;
+const busKey = (ride: BusRide): string => `bus:${ride.id}`;
 
-/** A hotel stay or rental offered because it falls within the ticked flights' trip. */
+const SUGGESTION_NOUNS = { hotel: 'hotel stay', car: 'car rental', bus: 'bus ride' } as const;
+
+/** A booking offered because it fits the ticked flights' trip. */
 interface Suggestion {
   key: string;
-  kind: 'hotel' | 'car';
+  kind: 'hotel' | 'car' | 'bus';
   title: string;
   when: string;
 }
@@ -71,10 +75,12 @@ export function ItineraryPage(): JSX.Element {
   const [copied, setCopied] = useState(false);
   const [hotels, setHotels] = useState<HotelStay[]>([]);
   const [cars, setCars] = useState<RentalCar[]>([]);
+  const [buses, setBuses] = useState<BusRide[]>([]);
 
   useEffect(() => {
     void api.hotels.list().then(setHotels);
     void api.rentals.list().then(setCars);
+    void api.buses.list().then(setBuses);
   }, []);
 
   const rows = useMemo(() => {
@@ -111,13 +117,25 @@ export function ItineraryPage(): JSX.Element {
         sortKey: car.pickupAt.length > 10 ? car.pickupAt.slice(0, 16) : `${car.pickupAt}T12:00`,
         car,
       }));
-    return [...flightEntries, ...hotelEntries, ...carEntries].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-  }, [rows, hotels, cars]);
+    const busEntries: ListEntry[] = buses
+      .filter((ride) => ride.arrivalAt.slice(0, 10) >= todayKey)
+      .map((ride) => ({ kind: 'bus', key: busKey(ride), sortKey: ride.departureAt.slice(0, 16), ride }));
+    return [...flightEntries, ...hotelEntries, ...carEntries, ...busEntries].sort((a, b) =>
+      a.sortKey.localeCompare(b.sortKey),
+    );
+  }, [rows, hotels, cars, buses]);
 
   const visibleEntries = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return entries;
     return entries.filter((entry) => {
+      if (entry.kind === 'bus') {
+        const r = entry.ride;
+        return [r.departureCity, r.arrivalCity, r.ticketReference, BUS_PROVIDER_LABELS[r.provider], ...r.passengerNames]
+          .join(' ')
+          .toLowerCase()
+          .includes(q);
+      }
       if (entry.kind === 'car') {
         const c = entry.car;
         return [c.pickupLocation, c.returnLocation, c.confirmationNumber, RENTAL_PROVIDER_LABELS[c.provider], c.driverName ?? '']
@@ -169,7 +187,11 @@ export function ItineraryPage(): JSX.Element {
     return cars.filter((car) => selected.has(carKey(car)));
   }
 
-  // Stays and rentals that fall within the trip the ticked flights make up and aren't ticked yet.
+  function selectedBuses(): BusRide[] {
+    return buses.filter((ride) => selected.has(busKey(ride)));
+  }
+
+  // Stays, rentals and airport buses that fit the trip the ticked flights make up and aren't ticked yet.
   const suggestions = useMemo<Suggestion[]>(() => {
     const flightsPicked = rows.filter((row) => selected.has(row.key)).map((row) => row.items[0]!.flight);
     const stays = suggestHotelStays(flightsPicked, hotels)
@@ -188,14 +210,27 @@ export function ItineraryPage(): JSX.Element {
         title: `${RENTAL_PROVIDER_LABELS[car.provider]} · ${car.pickupLocation}`,
         when: `${formatStayMoment(car.pickupAt)} → ${formatStayMoment(car.returnAt)}`,
       }));
-    return [...stays, ...rentals];
-  }, [rows, hotels, cars, selected]);
+    const transfers = suggestBusRides(flightsPicked, buses)
+      .filter((ride) => !selected.has(busKey(ride)))
+      .map<Suggestion>((ride) => ({
+        key: busKey(ride),
+        kind: 'bus',
+        title: `${ride.departureCity} → ${ride.arrivalCity}`,
+        when: `${formatStayMoment(ride.departureAt)}`,
+      }));
+    return [...stays, ...rentals, ...transfers];
+  }, [rows, hotels, cars, buses, selected]);
 
-  const suggestionNoun = suggestions.every((s) => s.kind === 'hotel')
-    ? 'hotel stay'
-    : suggestions.every((s) => s.kind === 'car')
-      ? 'car rental'
-      : 'hotel stay or car rental';
+  const suggestionHeadline = ((): string => {
+    const kinds = new Set(suggestions.map((s) => s.kind));
+    const single = kinds.size === 1 ? SUGGESTION_NOUNS[suggestions[0]!.kind] : undefined;
+    if (single) {
+      return suggestions.length === 1
+        ? `A ${single} matches these flights`
+        : `${suggestions.length} ${single}s match these flights`;
+    }
+    return `${suggestions.length} bookings match these flights`;
+  })();
 
   function addSuggested(items: Suggestion[]): void {
     setSelected((prev) => new Set([...prev, ...items.map((s) => s.key)]));
@@ -204,7 +239,12 @@ export function ItineraryPage(): JSX.Element {
   /** Build both versions from the same selection so they can never disagree. */
   function build(withConfirmation: boolean): void {
     const inputs = selectedInputs();
-    const options = { includeConfirmation: withConfirmation, hotels: selectedHotels(), rentals: selectedCars() };
+    const options = {
+      includeConfirmation: withConfirmation,
+      hotels: selectedHotels(),
+      rentals: selectedCars(),
+      buses: selectedBuses(),
+    };
     setText(buildItinerary(inputs, options));
     setHtml(buildItineraryHtml(inputs, options));
   }
@@ -239,6 +279,7 @@ export function ItineraryPage(): JSX.Element {
           includeConfirmation,
           hotels: selectedHotels(),
           rentals: selectedCars(),
+          buses: selectedBuses(),
         });
         await navigator.clipboard.write([
           new ClipboardItem({
@@ -263,7 +304,7 @@ export function ItineraryPage(): JSX.Element {
         <div>
           <h1 className="text-xl font-semibold text-slate-100">Itinerary</h1>
           <p className="text-sm text-slate-400">
-            Select flights, hotel stays and car rentals, then create a shareable itinerary to paste into an email.
+            Select flights, hotel stays, car rentals and bus rides, then create a shareable itinerary to paste into an email.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -298,17 +339,15 @@ export function ItineraryPage(): JSX.Element {
               role="status"
               className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5"
             >
-              {suggestions.some((s) => s.kind === 'hotel') ? (
+              {suggestions[0]!.kind === 'hotel' ? (
                 <Hotel size={16} className="mt-0.5 shrink-0 text-amber-300" />
+              ) : suggestions[0]!.kind === 'bus' ? (
+                <Bus size={16} className="mt-0.5 shrink-0 text-amber-300" />
               ) : (
                 <Car size={16} className="mt-0.5 shrink-0 text-amber-300" />
               )}
               <div className="min-w-0 flex-1 text-sm">
-                <p className="font-medium text-amber-200">
-                  {suggestions.length === 1
-                    ? `A ${suggestionNoun} matches these flights`
-                    : `${suggestions.length} ${suggestionNoun === 'hotel stay or car rental' ? 'stays and rentals' : `${suggestionNoun}s`} match these flights`}
-                </p>
+                <p className="font-medium text-amber-200">{suggestionHeadline}</p>
                 <ul className="mt-1 space-y-1">
                   {suggestions.map((item) => (
                     <li key={item.key} className="flex items-center justify-between gap-3 text-xs text-slate-300">
@@ -342,7 +381,7 @@ export function ItineraryPage(): JSX.Element {
             {visibleEntries.length === 0 ? (
               <p className="px-4 py-12 text-center text-sm text-slate-500">
                 {entries.length === 0
-                  ? 'No upcoming flights, hotel stays or rentals to include.'
+                  ? 'No upcoming flights, hotel stays, rentals or bus rides to include.'
                   : 'Nothing matches your filter.'}
               </p>
             ) : (
@@ -352,6 +391,44 @@ export function ItineraryPage(): JSX.Element {
                   const rowClass = `flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-slate-800/40 ${
                     isSelected ? 'bg-brand-600/10' : ''
                   }`;
+
+                  if (entry.kind === 'bus') {
+                    const ride = entry.ride;
+                    const direction = busAirportDirection(ride);
+                    return (
+                      <li key={entry.key} className="border-b border-slate-800 last:border-0">
+                        <label className={rowClass}>
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={isSelected}
+                            onChange={() => toggle(entry.key)}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                              <Bus size={14} className="shrink-0 text-slate-500" />
+                              <span className="truncate">
+                                {ride.departureCity} → {ride.arrivalCity}
+                              </span>
+                              <span className="shrink-0 text-[11px] font-normal text-slate-500">
+                                {BUS_PROVIDER_LABELS[ride.provider]}
+                                {direction && ` · ${direction === 'to' ? 'to' : 'from'} airport`}
+                              </span>
+                              <span className="shrink-0 font-mono text-[11px] font-normal tracking-wide text-slate-500">
+                                {ride.ticketReference}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400">
+                              {formatStayMoment(ride.departureAt)} → {formatStayMoment(ride.arrivalAt)}
+                            </p>
+                            {ride.passengerNames.length > 0 && (
+                              <p className="mt-0.5 text-xs text-slate-500">{ride.passengerNames.join(', ')}</p>
+                            )}
+                          </div>
+                        </label>
+                      </li>
+                    );
+                  }
 
                   if (entry.kind === 'car') {
                     const car = entry.car;
@@ -531,8 +608,9 @@ export function ItineraryPage(): JSX.Element {
               </div>
               <p className="text-sm font-medium text-slate-300">Your itinerary appears here</p>
               <p className="mt-1 text-sm text-slate-500">
-                Tick the flights, hotel stays and car rentals to include — two flights become an Outbound and a
-                Return journey, with each stay or rental placed between them by date — then choose Create itinerary.
+                Tick the flights, hotel stays, car rentals and bus rides to include — two flights become an
+                Outbound and a Return journey, with everything else placed between them by date — then choose
+                Create itinerary.
               </p>
             </Card>
           )}

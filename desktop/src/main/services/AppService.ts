@@ -10,6 +10,7 @@ import {
   PricingComparisonService,
   PurchaseType,
   RENTAL_EMAIL_QUERIES,
+  BUS_EMAIL_QUERIES,
   Recommendation,
   cancellationMatches,
   estimatePointsFromCash,
@@ -17,6 +18,9 @@ import {
   fetchSerpApiUsage,
   foldHotelEmails,
   foldRentalEmails,
+  foldBusEmails,
+  busCancellationMatches,
+  busRideKey,
   generateId,
   hotelStayKey,
   isAirlineError,
@@ -48,6 +52,8 @@ import {
   type RebookEvent,
   type RebookEventRepository,
   type RentalCar,
+  type BusRide,
+  type BusRideRepository,
   type RentalCarRepository,
   type CreditReviewItem,
   type CreditReviewRepository,
@@ -56,7 +62,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, HotelImportResult, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, RentalImportResult, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, HotelImportResult, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, RentalImportResult, BusImportResult, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
 import type { SettingsStore } from './SettingsStore.js';
@@ -195,6 +201,7 @@ export interface AppServiceDeps {
   creditReviews: CreditReviewRepository;
   hotelStays: HotelStayRepository;
   rentalCars: RentalCarRepository;
+  busRides: BusRideRepository;
   secrets: SecretStore;
   /** Directory where debug artifacts (raw email/page dumps) are written. */
   debugDir: string;
@@ -896,6 +903,56 @@ export class AppService {
     }
 
     log.info('Rental car import complete', { scanned: messages.size, added, updated, cancelled });
+    this.deps.onEmailProgress?.({ phase: 'done', scanned: messages.size, total: messages.size });
+    return { scanned: messages.size, added, updated, cancelled };
+  }
+
+  // --- Bus rides -----------------------------------------------------------
+
+  listBusRides(): Promise<BusRide[]> {
+    return this.deps.busRides.list();
+  }
+
+  /**
+   * Import OurBus tickets from Gmail, folded to the latest state per ticket
+   * reference (an operator-change update replaces the original ticket) and
+   * reconciled with storage.
+   */
+  async importBusRides(): Promise<BusImportResult> {
+    const source = await this.buildEmailSource(true);
+    if (!source || !(await source.isConnected())) {
+      throw new Error('Gmail is not connected. Connect your account in Settings first.');
+    }
+
+    const messages = await this.fetchReservationEmails(source, BUS_EMAIL_QUERIES, 'bus');
+    const folded = foldBusEmails([...messages.values()]);
+    const now = new Date().toISOString();
+    let added = 0;
+    let updated = 0;
+    let cancelled = 0;
+
+    const stored = await this.deps.busRides.list();
+    for (const cancellation of folded.cancellations) {
+      for (const ride of stored) {
+        if (busCancellationMatches(cancellation, ride) && !folded.rides.some((r) => busRideKey(r) === busRideKey(ride))) {
+          await this.deps.busRides.delete(ride.id);
+          cancelled += 1;
+        }
+      }
+    }
+
+    for (const parsed of folded.rides) {
+      const prior = await this.deps.busRides.getByKey(busRideKey(parsed));
+      if (prior) {
+        await this.deps.busRides.update({ ...parsed, id: prior.id, createdAt: prior.createdAt, updatedAt: now });
+        updated += 1;
+      } else {
+        await this.deps.busRides.create({ ...parsed, id: generateId('bus'), createdAt: now, updatedAt: now });
+        added += 1;
+      }
+    }
+
+    log.info('Bus import complete', { scanned: messages.size, added, updated, cancelled });
     this.deps.onEmailProgress?.({ phase: 'done', scanned: messages.size, total: messages.size });
     return { scanned: messages.size, added, updated, cancelled };
   }

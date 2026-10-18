@@ -5,7 +5,8 @@ import { Airline, FareType, FlightSource, PurchaseType } from '../models/common.
 import type { Flight } from '../models/Flight.js';
 import type { HotelStay } from '../models/HotelStay.js';
 import type { RentalCar } from '../models/RentalCar.js';
-import { suggestHotelStays, suggestRentalCars } from './hotelSuggestions.js';
+import type { BusRide } from '../models/BusRide.js';
+import { suggestBusRides, suggestHotelStays, suggestRentalCars } from './hotelSuggestions.js';
 
 function flight(departs: string, arrives: string): Flight {
   return {
@@ -112,4 +113,44 @@ test('a rental that spans the outbound departure is suggested; no flights means 
   const spanning = rental('span', '2026-06-06T09:00:00', '2026-06-09T09:00:00');
   assert.equal(suggestRentalCars([outbound], [spanning]).length, 1);
   assert.deepEqual(suggestRentalCars([], [spanning]), []);
+});
+function bus(id: string, departureAt: string, departureCity: string, arrivalCity: string): BusRide {
+  return {
+    id,
+    provider: 'ourbus',
+    ticketReference: id.toUpperCase(),
+    departureAt,
+    arrivalAt: departureAt,
+    departureCity,
+    arrivalCity,
+    passengerNames: [],
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+  };
+}
+
+test('a bus to the airport the day before or of the first flight is suggested; one after is not', () => {
+  const rides = [
+    bus('eve', '2026-06-06T20:00:00', 'Ithaca, NY', 'Syracuse Airport, NY'),
+    bus('morning', '2026-06-07T09:00:00', 'Ithaca, NY', 'Syracuse Airport, NY'),
+    bus('early', '2026-06-04T09:00:00', 'Ithaca, NY', 'Syracuse Airport, NY'),
+    bus('late', '2026-06-08T09:00:00', 'Ithaca, NY', 'Syracuse Airport, NY'),
+  ];
+  assert.deepEqual(suggestBusRides([outbound, ret], rides).map((r) => r.id), ['eve', 'morning']);
+});
+
+test('a bus from the airport on or the day after the last arrival is suggested', () => {
+  const rides = [
+    bus('same', '2026-06-11T17:00:00', 'Syracuse Airport, NY', 'Ithaca, NY'),
+    bus('next', '2026-06-12T08:00:00', 'Syracuse Airport, NY', 'Ithaca, NY'),
+    bus('later', '2026-06-13T08:00:00', 'Syracuse Airport, NY', 'Ithaca, NY'),
+    bus('before', '2026-06-10T08:00:00', 'Syracuse Airport, NY', 'Ithaca, NY'),
+  ];
+  assert.deepEqual(suggestBusRides([outbound, ret], rides).map((r) => r.id), ['same', 'next']);
+});
+
+test('rides that never touch an airport are not suggested, and no flights means none', () => {
+  const rides = [bus('town', '2026-06-07T09:00:00', 'Ithaca, NY', 'Syracuse, NY')];
+  assert.deepEqual(suggestBusRides([outbound, ret], rides), []);
+  assert.deepEqual(suggestBusRides([], [bus('x', '2026-06-07T09:00:00', 'Ithaca, NY', 'Syracuse Airport, NY')]), []);
 });

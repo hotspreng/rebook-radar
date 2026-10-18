@@ -17,6 +17,6 @@ export { generateId } from './utils/id.js';
 export { exportFlightsToCsv } from './utils/csv.js';
 export type { ExportRow } from './utils/csv.js';
 export { buildItinerary, buildItineraryHtml } from './utils/itinerary.js';
-export { suggestHotelStays, suggestRentalCars } from './utils/hotelSuggestions.js';
+export { suggestHotelStays, suggestRentalCars, suggestBusRides } from './utils/hotelSuggestions.js';
 export type { ItineraryFlight, ItineraryOptions } from './utils/itinerary.js';
 export { formatAirportCity, formatAirportName, lookupAirport } from './data/airports.js';

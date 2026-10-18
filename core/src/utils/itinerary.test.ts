@@ -5,6 +5,7 @@ import { Airline, Cabin, FareType, FlightSource, PurchaseType } from '../models/
 import type { Flight } from '../models/Flight.js';
 import type { HotelStay } from '../models/HotelStay.js';
 import type { RentalCar } from '../models/RentalCar.js';
+import type { BusRide } from '../models/BusRide.js';
 import { buildItinerary, buildItineraryHtml } from './itinerary.js';
 
 function makeFlight(overrides: Partial<Flight> = {}): Flight {
@@ -500,4 +501,71 @@ test('the formatted version of a rental carries the same content and escapes mar
   assert.match(html, /123456789/);
   assert.match(html, /Car &lt;i&gt;X&lt;\/i&gt;/);
   assert.doesNotMatch(html, /<i>/);
+});
+// --- bus rides --------------------------------------------------------------
+
+const BUS_TO_AIRPORT: BusRide = {
+  id: 'b1',
+  provider: 'ourbus',
+  ticketReference: 'ABCD12',
+  departureAt: '2027-01-07T07:15:00',
+  arrivalAt: '2027-01-07T08:45:00',
+  departureCity: 'Ithaca, NY',
+  departureStop: 'Campus Road behind Example Hall',
+  arrivalCity: 'Chicago Airport, IL',
+  arrivalStop: 'Terminal 1 ground transportation',
+  vehicle: 'Motor Coach',
+  operator: 'Example Coach Inc',
+  passengerNames: ['Jane Traveler', 'John Traveler'],
+  createdAt: '2026-10-17T00:00:00Z',
+  updatedAt: '2026-10-17T00:00:00Z',
+};
+
+const BUS_FROM_AIRPORT: BusRide = {
+  ...BUS_TO_AIRPORT,
+  id: 'b2',
+  ticketReference: 'WXYZ34',
+  departureAt: '2027-01-14T17:00:00',
+  arrivalAt: '2027-01-14T19:30:00',
+  departureCity: 'Rochester, NY',
+  departureStop: 'Example Regional Airport, arrivals/lower level',
+  arrivalCity: 'Ithaca, NY',
+  arrivalStop: undefined,
+  operator: undefined,
+  passengerNames: [],
+};
+
+test('bus transfers are labelled by airport direction and placed in date order', () => {
+  const text = buildItinerary([outbound('Joshua Sprenger', 'a'), ret('Joshua Sprenger', 'b')], {
+    buses: [BUS_FROM_AIRPORT, BUS_TO_AIRPORT],
+  });
+  const to = text.indexOf('BUS TO AIRPORT');
+  const out = text.indexOf('OUTBOUND JOURNEY');
+  const back = text.indexOf('RETURN JOURNEY');
+  const from = text.indexOf('BUS FROM AIRPORT');
+  assert.ok(to >= 0 && to < out && out < back && back < from, 'bus, outbound, return, bus');
+  assert.match(text, /^TRAVEL ITINERARY$/m);
+});
+
+test('a bus ride lists stops, times, operator, passengers and ticket reference', () => {
+  const text = buildItinerary([], { buses: [BUS_TO_AIRPORT] });
+  assert.match(text, /^BUS ITINERARY$/m);
+  assert.match(text, /^Travelers: Jane Traveler, John Traveler$/m);
+  assert.match(text, /^OurBus$/m);
+  assert.match(text, /^From: Ithaca, NY – Campus Road behind Example Hall$/m);
+  assert.match(text, /^Departs: 7:15 AM$/m);
+  assert.match(text, /^To: Chicago Airport, IL – Terminal 1 ground transportation$/m);
+  assert.match(text, /^Arrives: 8:45 AM$/m);
+  assert.match(text, /^Operated by: Example Coach Inc$/m);
+  assert.match(text, /^Passengers: Jane Traveler, John Traveler$/m);
+  assert.match(text, /^Ticket reference: ABCD12$/m);
+  assert.doesNotMatch(buildItinerary([], { buses: [BUS_TO_AIRPORT], includeConfirmation: false }), /ABCD12/);
+});
+
+test('the formatted version of a bus ride carries the same content and escapes markup', () => {
+  const html = buildItineraryHtml([], { buses: [{ ...BUS_TO_AIRPORT, operator: 'A <b>Coach</b>' }] });
+  assert.match(html, /BUS TO AIRPORT/);
+  assert.match(html, /A &lt;b&gt;Coach&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<b>Coach/);
+  assert.match(html, /ABCD12/);
 });

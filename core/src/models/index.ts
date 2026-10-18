@@ -9,3 +9,4 @@ export * from './RebookEvent.js';
 export * from './CreditReview.js';
 export * from './HotelStay.js';
 export * from './RentalCar.js';
+export * from './BusRide.js';

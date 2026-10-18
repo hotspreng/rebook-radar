@@ -176,6 +176,30 @@ CREATE TABLE IF NOT EXISTS rental_cars (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rental_cars_key ON rental_cars(rental_key);
 CREATE INDEX IF NOT EXISTS idx_rental_cars_pickup ON rental_cars(pickup_at);
+
+-- Imported bus tickets (OurBus). ride_key is provider + ticket reference.
+CREATE TABLE IF NOT EXISTS bus_rides (
+  id TEXT PRIMARY KEY,
+  ride_key TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  ticket_reference TEXT NOT NULL,
+  departure_at TEXT NOT NULL,
+  arrival_at TEXT NOT NULL,
+  departure_city TEXT NOT NULL,
+  departure_stop TEXT,
+  arrival_city TEXT NOT NULL,
+  arrival_stop TEXT,
+  vehicle TEXT,
+  operator TEXT,
+  passenger_names_json TEXT NOT NULL,
+  email_id TEXT,
+  booked_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bus_rides_key ON bus_rides(ride_key);
+CREATE INDEX IF NOT EXISTS idx_bus_rides_departure ON bus_rides(departure_at);
 CREATE INDEX IF NOT EXISTS idx_flights_passenger ON flights(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_flights_account ON flights(account_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_flight ON price_history(flight_id, recorded_at);

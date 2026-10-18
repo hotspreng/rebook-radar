@@ -110,6 +110,9 @@ export interface HotelImportResult {
 /** Outcome of importing car rental reservations from Gmail. */
 export type RentalImportResult = HotelImportResult;
 
+/** Outcome of importing bus tickets from Gmail. */
+export type BusImportResult = HotelImportResult;
+
 /** Live progress emitted while an email import is running. */
 export interface EmailImportProgress {
   /** Current stage of the import. */

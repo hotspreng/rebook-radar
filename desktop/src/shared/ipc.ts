@@ -67,6 +67,10 @@ export const IPC = {
   rentalList: 'rental:list',
   rentalImport: 'rental:import',
 
+  // Bus rides
+  busList: 'bus:list',
+  busImport: 'bus:import',
+
   // System
   openExternal: 'system:openExternal',
 

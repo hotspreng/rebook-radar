@@ -20,6 +20,7 @@ import { SqliteRebookEventRepository } from './database/repositories/SqliteReboo
 import { SqliteCreditReviewRepository } from './database/repositories/SqliteCreditReviewRepository.js';
 import { SqliteHotelStayRepository } from './database/repositories/SqliteHotelStayRepository.js';
 import { SqliteRentalCarRepository } from './database/repositories/SqliteRentalCarRepository.js';
+import { SqliteBusRideRepository } from './database/repositories/SqliteBusRideRepository.js';
 import { SafeStorageSecretStore } from './security/SafeStorageSecretStore.js';
 import { AppService } from './services/AppService.js';
 import { SettingsStore } from './services/SettingsStore.js';
@@ -61,6 +62,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
   const creditReviews = new SqliteCreditReviewRepository();
   const hotelStays = new SqliteHotelStayRepository();
   const rentalCars = new SqliteRentalCarRepository();
+  const busRides = new SqliteBusRideRepository();
   const secrets = new SafeStorageSecretStore();
   const notifier = new Notifier();
 
@@ -80,6 +82,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
     creditReviews,
     hotelStays,
     rentalCars,
+    busRides,
     secrets,
     debugDir,
     openExternal: (url: string) => shell.openExternal(url),

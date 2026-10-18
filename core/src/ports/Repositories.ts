@@ -8,6 +8,7 @@ import { RebookEvent } from '../models/RebookEvent.js';
 import { CreditReviewItem } from '../models/CreditReview.js';
 import { HotelStay } from '../models/HotelStay.js';
 import { RentalCar } from '../models/RentalCar.js';
+import { BusRide } from '../models/BusRide.js';
 
 /**
  * Persistence "ports" (hexagonal architecture). Core defines WHAT it needs from
@@ -104,6 +105,16 @@ export interface HotelStayRepository {
   getByKey(key: string): Promise<HotelStay | undefined>;
   create(stay: HotelStay): Promise<void>;
   update(stay: HotelStay): Promise<void>;
+  delete(id: string): Promise<void>;
+}
+
+export interface BusRideRepository {
+  /** All rides, soonest departure first. */
+  list(): Promise<BusRide[]>;
+  /** One ride by its {@link busRideKey} identity. */
+  getByKey(key: string): Promise<BusRide | undefined>;
+  create(ride: BusRide): Promise<void>;
+  update(ride: BusRide): Promise<void>;
   delete(id: string): Promise<void>;
 }
 

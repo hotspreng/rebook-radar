@@ -1,6 +1,38 @@
 import type { Flight } from '../models/Flight.js';
 import type { HotelStay } from '../models/HotelStay.js';
 import type { RentalCar } from '../models/RentalCar.js';
+import { busAirportDirection, type BusRide } from '../models/BusRide.js';
+
+function shiftDay(date: string, days: number): string {
+  const d = new Date(Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)) + days));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Airport bus transfers for the trip the given flights make up: a ride that
+ * ends at an airport within a day before the first departure, or one that
+ * starts at an airport within a day after the last arrival. Rides whose stops
+ * don't mention an airport are never suggested. Results are in departure order.
+ */
+export function suggestBusRides(flights: Flight[], rides: BusRide[]): BusRide[] {
+  const dates = flights.flatMap((f) =>
+    [f.departureDateTime, f.arrivalDateTime].flatMap((value) => (value ? [value.slice(0, 10)] : [])),
+  );
+  if (dates.length === 0) return [];
+
+  const start = dates.reduce((a, b) => (a < b ? a : b));
+  const end = dates.reduce((a, b) => (a > b ? a : b));
+
+  return rides
+    .filter((ride) => {
+      const day = ride.departureAt.slice(0, 10);
+      const direction = busAirportDirection(ride);
+      if (direction === 'to') return day >= shiftDay(start, -1) && day <= start;
+      if (direction === 'from') return day >= end && day <= shiftDay(end, 1);
+      return false;
+    })
+    .sort((a, b) => a.departureAt.localeCompare(b.departureAt));
+}
 
 /**
  * Hotel stays that fall within the trip the given flights make up.

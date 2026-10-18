@@ -12,4 +12,6 @@ export * from './hotelEmailParsing.js';
 export * from './hotelStayImport.js';
 export * from './rentalEmailParsing.js';
 export * from './rentalCarImport.js';
+export * from './busEmailParsing.js';
+export * from './busRideImport.js';
 export * from './EmailTripImportService.js';

@@ -3,6 +3,7 @@ import type { Airport, Flight, FlightSegment } from '../models/Flight.js';
 import { operatingAirline } from '../models/Flight.js';
 import { HOTEL_PROVIDER_LABELS, type HotelStay } from '../models/HotelStay.js';
 import { RENTAL_PROVIDER_LABELS, type RentalCar } from '../models/RentalCar.js';
+import { BUS_PROVIDER_LABELS, busAirportDirection, type BusRide } from '../models/BusRide.js';
 import { formatAirportCity, formatAirportName, lookupAirport } from '../data/airports.js';
 
 /** One tracked flight plus the traveler it belongs to. */
@@ -20,6 +21,8 @@ export interface ItineraryOptions {
   hotels?: HotelStay[];
   /** Car rentals to list alongside the flights and stays, in date order. */
   rentals?: RentalCar[];
+  /** Bus rides (airport transfers) to list alongside the rest, in date order. */
+  buses?: BusRide[];
 }
 
 /** Full carrier names for correspondence ("United Airlines", not "United"). */
@@ -420,20 +423,59 @@ function rentalLocationLabel(location: string): string {
   return code && lookupAirport(code) ? formatAirportName(code) : location;
 }
 
+/** "Ithaca, NY – Campus Road behind Example Hall" */
+function busStopLabel(city: string, stop: string | undefined): string {
+  return stop ? `${city} – ${stop}` : city;
+}
+
+function describeBus(ride: BusRide, includeConfirmation: boolean): JourneyView {
+  const departs = parseLocal(ride.departureAt);
+  const arrives = parseLocal(ride.arrivalAt);
+  const details: Field[] = [
+    { label: 'From', value: busStopLabel(ride.departureCity, ride.departureStop) },
+    ...(departs ? [{ label: 'Departs', value: formatTime(departs) }] : []),
+    { label: 'To', value: busStopLabel(ride.arrivalCity, ride.arrivalStop) },
+    ...(arrives && departs ? [{ label: 'Arrives', value: formatEndpoint(arrives, departs) }] : []),
+  ];
+  if (ride.vehicle) details.push({ label: 'Vehicle', value: ride.vehicle });
+  if (ride.operator) details.push({ label: 'Operated by', value: ride.operator });
+
+  const extras: Field[] = [];
+  if (ride.passengerNames.length > 0) {
+    extras.push({ label: ride.passengerNames.length > 1 ? 'Passengers' : 'Passenger', value: ride.passengerNames.join(', ') });
+  }
+
+  const direction = busAirportDirection(ride);
+  return {
+    heading: direction === 'to' ? 'BUS TO AIRPORT' : direction === 'from' ? 'BUS FROM AIRPORT' : 'BUS',
+    date: departs ? formatDay(departs) : undefined,
+    carrier: BUS_PROVIDER_LABELS[ride.provider],
+    details,
+    segments: [],
+    extras,
+    confirmations: includeConfirmation ? [{ label: 'Ticket reference', value: ride.ticketReference }] : [],
+  };
+}
+
 function buildView(inputs: ItineraryFlight[], options: ItineraryOptions): ItineraryView | undefined {
   const journeys = groupJourneys(inputs);
   const stays = options.hotels ?? [];
   const cars = options.rentals ?? [];
-  if (journeys.length === 0 && stays.length === 0 && cars.length === 0) return undefined;
+  const buses = options.buses ?? [];
+  if (journeys.length === 0 && stays.length === 0 && cars.length === 0 && buses.length === 0) return undefined;
 
   const includeConfirmation = options.includeConfirmation ?? true;
   const travelers: string[] = [];
   for (const journey of journeys) {
     for (const name of journey.passengers) if (!travelers.includes(name)) travelers.push(name);
   }
-  // Without flights there are no passengers, so name the hotel guests and drivers instead.
+  // Without flights there are no passengers, so name the hotel guests, drivers and bus passengers instead.
   if (journeys.length === 0) {
-    const names = [...stays.flatMap((s) => s.guestNames), ...cars.map((c) => c.driverName ?? '')];
+    const names = [
+      ...stays.flatMap((s) => s.guestNames),
+      ...cars.map((c) => c.driverName ?? ''),
+      ...buses.flatMap((b) => b.passengerNames),
+    ];
     for (const name of names) if (name && !travelers.includes(name)) travelers.push(name);
   }
 
@@ -451,12 +493,19 @@ function buildView(inputs: ItineraryFlight[], options: ItineraryOptions): Itiner
       sortKey: car.pickupAt.length > 10 ? car.pickupAt.slice(0, 16) : `${car.pickupAt}T12:00`,
       view: describeRental(car, includeConfirmation),
     })),
+    ...buses.map((ride) => ({
+      sortKey: ride.departureAt.slice(0, 16),
+      view: describeBus(ride, includeConfirmation),
+    })),
   ].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-  const kind =
-    journeys.length > 0
-      ? stays.length + cars.length > 0 ? 'Travel' : 'Flight'
-      : stays.length > 0 ? (cars.length > 0 ? 'Travel' : 'Hotel') : 'Car Rental';
+  const kinds = [
+    journeys.length > 0 ? 'Flight' : '',
+    stays.length > 0 ? 'Hotel' : '',
+    cars.length > 0 ? 'Car Rental' : '',
+    buses.length > 0 ? 'Bus' : '',
+  ].filter(Boolean);
+  const kind = kinds.length === 1 ? kinds[0]! : 'Travel';
   return {
     title: options.title ?? `${kind.toUpperCase()} ITINERARY`,
     htmlTitle: options.title ?? `${kind} Itinerary`,
