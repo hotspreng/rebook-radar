@@ -95,6 +95,18 @@ export interface EmailImportResult {
   creditsQueued: number;
 }
 
+/** Outcome of importing hotel reservations from Gmail. */
+export interface HotelImportResult {
+  /** Emails scanned across all hotel senders. */
+  scanned: number;
+  /** New reservations stored. */
+  added: number;
+  /** Existing reservations refreshed from a newer confirmation. */
+  updated: number;
+  /** Reservations removed because of a cancellation email. */
+  cancelled: number;
+}
+
 /** Live progress emitted while an email import is running. */
 export interface EmailImportProgress {
   /** Current stage of the import. */

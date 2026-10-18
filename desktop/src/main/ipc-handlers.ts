@@ -106,6 +106,10 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
     service.applyCreditReview(itemId, flightId),
   );
   handle<string>(IPC.reviewDismiss, (itemId) => service.dismissCreditReview(itemId));
+
+  // Hotel stays
+  handle(IPC.hotelList, () => service.listHotelStays());
+  handle(IPC.hotelImport, () => service.importHotelStays());
   // System
   handle<string>(IPC.openExternal, (url) => shell.openExternal(url));
 

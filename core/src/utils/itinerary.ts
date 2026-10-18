@@ -1,6 +1,7 @@
 import { AIRLINE_LABELS, Airline, CABIN_LABELS, Cabin } from '../models/common.js';
 import type { Airport, Flight, FlightSegment } from '../models/Flight.js';
 import { operatingAirline } from '../models/Flight.js';
+import { HOTEL_PROVIDER_LABELS, type HotelStay } from '../models/HotelStay.js';
 import { formatAirportCity, formatAirportName } from '../data/airports.js';
 
 /** One tracked flight plus the traveler it belongs to. */
@@ -10,10 +11,12 @@ export interface ItineraryFlight {
 }
 
 export interface ItineraryOptions {
-  /** Heading printed at the top. Defaults to "FLIGHT ITINERARY". */
+  /** Heading printed at the top. Defaults to "FLIGHT ITINERARY" / "HOTEL ITINERARY" / "TRAVEL ITINERARY". */
   title?: string;
   /** Include confirmation numbers. Defaults to true. */
   includeConfirmation?: boolean;
+  /** Hotel stays to list alongside the flights, in date order. */
+  hotels?: HotelStay[];
 }
 
 /** Full carrier names for correspondence ("United Airlines", not "United"). */
@@ -190,10 +193,15 @@ interface SegmentView {
   layover?: string;
 }
 
-/** Everything printed for one journey, independent of output format. */
+/**
+ * Everything printed for one itinerary section, independent of output format.
+ * A hotel stay uses the same shape as a flight journey (`carrier` holds the
+ * hotel name), so both renderers draw either without special cases.
+ */
 interface JourneyView {
   heading: string;
   date?: string;
+  /** The airline for a flight; the hotel name for a stay. */
   carrier: string;
   /** Flight / From / To / Departs / Arrives / Duration. */
   details: Field[];
@@ -209,6 +217,7 @@ interface ItineraryView {
   title: string;
   htmlTitle: string;
   travelers: string[];
+  /** Flights and hotel stays, in date order. */
   journeys: JourneyView[];
 }
 
@@ -309,28 +318,112 @@ function describeJourney(journey: Journey, heading: string, allPassengers: strin
   };
 }
 
+/** "2026-11-19T15:00:00" or "2025-06-27" (time unknown). */
+function parseStayMoment(value: string): { day: LocalDateTime; hasTime: boolean } | undefined {
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
+  if (!m) return undefined;
+  return {
+    day: { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]), hour: Number(m[4] ?? 0), minute: Number(m[5] ?? 0) },
+    hasTime: m[4] !== undefined,
+  };
+}
+
+/** "Thursday, November 19, 2026, from 3:00 PM" — the time is added only when known. */
+function stayDateLabel(value: string, timePrefix: string): string {
+  const moment = parseStayMoment(value);
+  if (!moment) return value;
+  const day = formatDay(moment.day);
+  return moment.hasTime ? `${day}, ${timePrefix} ${formatTime(moment.day)}` : day;
+}
+
+function describeStay(stay: HotelStay, includeConfirmation: boolean): JourneyView {
+  const checkIn = parseStayMoment(stay.checkIn);
+  const details: Field[] = [];
+  if (stay.address) details.push({ label: 'Address', value: stay.address });
+  if (stay.phone) details.push({ label: 'Phone', value: stay.phone });
+  details.push({ label: 'Check-in', value: stayDateLabel(stay.checkIn, 'from') });
+  details.push({ label: 'Check-out', value: stayDateLabel(stay.checkOut, 'by') });
+  if (stay.nights != null && stay.nights > 0) {
+    details.push({ label: 'Nights', value: String(stay.nights) });
+  }
+
+  const extras: Field[] = [];
+  const party = stay.guests != null ? `${stay.guests} ${stay.guests === 1 ? 'guest' : 'guests'}` : undefined;
+  if (stay.guestNames.length > 0) {
+    const names = stay.guestNames.join(', ');
+    extras.push({
+      label: stay.guestNames.length > 1 ? 'Guests' : 'Guest',
+      value: party && stay.guestNames.length < (stay.guests ?? 0) ? `${names} (${party})` : names,
+    });
+  } else if (party) {
+    extras.push({ label: 'Guests', value: String(stay.guests) });
+  }
+  if (stay.rooms != null && stay.rooms > 1) extras.push({ label: 'Rooms', value: String(stay.rooms) });
+  if (stay.roomType) extras.push({ label: 'Room', value: stay.roomType });
+
+  const confirmations: Field[] = [];
+  if (includeConfirmation) {
+    if (stay.confirmationNumber) confirmations.push({ label: 'Confirmation', value: stay.confirmationNumber });
+    if (stay.bookingReference) {
+      confirmations.push({
+        label: `Booking reference (via ${HOTEL_PROVIDER_LABELS[stay.provider]})`,
+        value: stay.bookingReference,
+      });
+    }
+  }
+
+  return {
+    heading: 'HOTEL STAY',
+    date: checkIn ? formatDay(checkIn.day) : undefined,
+    carrier: stay.hotelName,
+    details,
+    segments: [],
+    extras,
+    confirmations,
+  };
+}
+
 function buildView(inputs: ItineraryFlight[], options: ItineraryOptions): ItineraryView | undefined {
   const journeys = groupJourneys(inputs);
-  if (journeys.length === 0) return undefined;
+  const stays = options.hotels ?? [];
+  if (journeys.length === 0 && stays.length === 0) return undefined;
 
   const includeConfirmation = options.includeConfirmation ?? true;
   const travelers: string[] = [];
   for (const journey of journeys) {
     for (const name of journey.passengers) if (!travelers.includes(name)) travelers.push(name);
   }
+  // A hotel-only itinerary has no flight passengers, so name the guests instead.
+  if (journeys.length === 0) {
+    for (const stay of stays) {
+      for (const name of stay.guestNames) if (!travelers.includes(name)) travelers.push(name);
+    }
+  }
 
+  const sections: { sortKey: string; view: JourneyView }[] = [
+    ...journeys.map((journey, index) => ({
+      sortKey: journey.flight.departureDateTime.slice(0, 16),
+      view: describeJourney(journey, journeyHeading(index, journeys.length), travelers, includeConfirmation),
+    })),
+    ...stays.map((stay) => ({
+      // A date-only check-in sorts as the usual mid-afternoon check-in time.
+      sortKey: stay.checkIn.length > 10 ? stay.checkIn.slice(0, 16) : `${stay.checkIn}T15:00`,
+      view: describeStay(stay, includeConfirmation),
+    })),
+  ].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+  const kind = journeys.length > 0 ? (stays.length > 0 ? 'Travel' : 'Flight') : 'Hotel';
   return {
-    title: options.title ?? 'FLIGHT ITINERARY',
-    htmlTitle: options.title ?? 'Flight Itinerary',
+    title: options.title ?? `${kind.toUpperCase()} ITINERARY`,
+    htmlTitle: options.title ?? `${kind} Itinerary`,
     travelers,
-    journeys: journeys.map((journey, index) =>
-      describeJourney(journey, journeyHeading(index, journeys.length), travelers, includeConfirmation),
-    ),
+    journeys: sections.map((s) => s.view),
   };
 }
 
 function renderText(view: ItineraryView): string {
-  const lines: string[] = [view.title, `Travelers: ${view.travelers.join(', ')}`];
+  const lines: string[] = [view.title];
+  if (view.travelers.length > 0) lines.push(`Travelers: ${view.travelers.join(', ')}`);
 
   for (const j of view.journeys) {
     lines.push('', j.heading);
@@ -418,7 +511,9 @@ function renderHtml(view: ItineraryView): string {
   return (
     `<div style="${FONT}color:#1f2933;font-size:14px;line-height:1.45;max-width:600px">` +
     `<div style="font-size:22px;font-weight:700;color:${NAVY};margin:0 0 4px">${esc(view.htmlTitle)}</div>` +
-    `<div style="color:#52606d;margin:0 0 16px"><strong style="color:#1f2933">Travelers:</strong> ${esc(view.travelers.join(', '))}</div>` +
+    (view.travelers.length > 0
+      ? `<div style="color:#52606d;margin:0 0 16px"><strong style="color:#1f2933">Travelers:</strong> ${esc(view.travelers.join(', '))}</div>`
+      : '') +
     `${view.journeys.map(htmlJourney).join('')}</div>`
   );
 }

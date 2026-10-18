@@ -7,6 +7,7 @@ import type {
   CreateAccountInput,
   CreditReviewView,
   EmailImportProgress,
+  HotelImportResult,
   PriceCheckProgress,
   EmailImportResult,
   EmailStatus,
@@ -23,6 +24,7 @@ import type {
 import type {
   Account,
   Flight,
+  HotelStay,
   NewAccount,
   NewFlight,
   NewPassenger,
@@ -97,6 +99,10 @@ const api: SwrApi = {
     apply: (itemId: string, flightId: string) =>
       invoke<void>(IPC.reviewApply, { itemId, flightId }),
     dismiss: (itemId: string) => invoke<void>(IPC.reviewDismiss, itemId),
+  },
+  hotels: {
+    list: () => invoke<HotelStay[]>(IPC.hotelList),
+    import: () => invoke<HotelImportResult>(IPC.hotelImport),
   },
   exportCsv: () => invoke<{ saved: boolean; path?: string }>(IPC.exportCsv),
   openExternal: (url: string) => invoke<void>(IPC.openExternal, url),

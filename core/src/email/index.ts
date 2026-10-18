@@ -7,4 +7,7 @@ export * from './deltaEmailParsing.js';
 export * from './americanEmailParsing.js';
 export * from './airCanadaEmailParsing.js';
 export * from './airlineReceiptParsing.js';
+export * from './forwardedEmail.js';
+export * from './hotelEmailParsing.js';
+export * from './hotelStayImport.js';
 export * from './EmailTripImportService.js';

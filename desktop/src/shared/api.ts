@@ -1,6 +1,7 @@
 import type {
   Account,
   Flight,
+  HotelStay,
   NewAccount,
   NewFlight,
   NewPassenger,
@@ -12,6 +13,7 @@ import type {
   CreateAccountInput,
   CreditReviewView,
   EmailImportProgress,
+  HotelImportResult,
   PriceCheckProgress,
   EmailImportResult,
   EmailStatus,
@@ -95,6 +97,10 @@ export interface SwrApi {
     list(): Promise<CreditReviewView[]>;
     apply(itemId: string, flightId: string): Promise<void>;
     dismiss(itemId: string): Promise<void>;
+  };
+  hotels: {
+    list(): Promise<HotelStay[]>;
+    import(): Promise<HotelImportResult>;
   };
   exportCsv(): Promise<{ saved: boolean; path?: string }>;
   openExternal(url: string): Promise<void>;

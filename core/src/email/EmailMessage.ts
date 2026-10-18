@@ -21,6 +21,13 @@ export interface EmailMessage {
   body: string;
   /** Short provider-supplied preview snippet, when available. */
   snippet?: string;
+  /** Files attached to the message (names only; contents are not downloaded). */
+  attachments?: EmailAttachment[];
+}
+
+export interface EmailAttachment {
+  filename: string;
+  mimeType?: string;
 }
 
 /** A Gmail-style search query plus an optional cap on results. */

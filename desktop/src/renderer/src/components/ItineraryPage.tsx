@@ -1,16 +1,26 @@
-import { useMemo, useState } from 'react';
-import { AIRLINE_LABELS, buildItinerary, buildItineraryHtml, operatingAirline } from '@swr/core';
+import { useEffect, useMemo, useState } from 'react';
+import { AIRLINE_LABELS, HOTEL_PROVIDER_LABELS, buildItinerary, buildItineraryHtml, operatingAirline } from '@swr/core';
+import type { HotelStay } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
-import { ArrowRight, Check, Copy, FileText, Search, Wand2, X } from 'lucide-react';
+import { ArrowRight, Check, Copy, FileText, Hotel, Search, Wand2, X } from 'lucide-react';
 import { Button, Card, inputClass } from './ui.js';
-import { formatDateTime } from '../lib/format.js';
+import { formatDateTime, formatStayMoment } from '../lib/format.js';
 import { useAppStore } from '../store/useAppStore.js';
+
+const api = window.swr;
 
 /** One selectable row: every traveler tracked on the same physical flight. */
 interface JourneyRow {
   key: string;
   items: FlightWithComparison[];
 }
+
+/** A flight row or a hotel stay, listed together in date order. */
+type ListEntry =
+  | { kind: 'flight'; key: string; sortKey: string; row: JourneyRow }
+  | { kind: 'hotel'; key: string; sortKey: string; stay: HotelStay };
+
+const hotelKey = (stay: HotelStay): string => `hotel:${stay.id}`;
 
 /**
  * Travelers booked together are tracked as one flight each. Group those that
@@ -49,6 +59,11 @@ export function ItineraryPage(): JSX.Element {
   const [html, setHtml] = useState('');
   const [generated, setGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [hotels, setHotels] = useState<HotelStay[]>([]);
+
+  useEffect(() => {
+    void api.hotels.list().then(setHotels);
+  }, []);
 
   const rows = useMemo(() => {
     const now = Date.now();
@@ -59,23 +74,50 @@ export function ItineraryPage(): JSX.Element {
     return groupRows(upcoming);
   }, [flights]);
 
-  const visibleRows = useMemo(() => {
+  const entries = useMemo<ListEntry[]>(() => {
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const flightEntries: ListEntry[] = rows.map((row) => ({
+      kind: 'flight',
+      key: row.key,
+      sortKey: row.items[0]!.flight.departureDateTime.slice(0, 16),
+      row,
+    }));
+    const hotelEntries: ListEntry[] = hotels
+      .filter((stay) => stay.checkOut.slice(0, 10) >= todayKey)
+      .map((stay) => ({
+        kind: 'hotel',
+        key: hotelKey(stay),
+        sortKey: stay.checkIn.length > 10 ? stay.checkIn.slice(0, 16) : `${stay.checkIn}T15:00`,
+        stay,
+      }));
+    return [...flightEntries, ...hotelEntries].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }, [rows, hotels]);
+
+  const visibleEntries = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) => {
-      const f = row.items[0]!.flight;
+    if (!q) return entries;
+    return entries.filter((entry) => {
+      if (entry.kind === 'hotel') {
+        const s = entry.stay;
+        return [s.hotelName, s.address, s.confirmationNumber, s.bookingReference, HOTEL_PROVIDER_LABELS[s.provider], ...s.guestNames]
+          .join(' ')
+          .toLowerCase()
+          .includes(q);
+      }
+      const f = entry.row.items[0]!.flight;
       const haystack = [
         f.confirmationNumber,
         f.route.origin.code,
         f.route.destination.code,
         AIRLINE_LABELS[operatingAirline(f)],
-        ...row.items.map((i) => i.passengerName),
+        ...entry.row.items.map((i) => i.passengerName),
       ]
         .join(' ')
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [rows, query]);
+  }, [entries, query]);
 
   function toggle(key: string): void {
     setSelected((prev) => {
@@ -92,11 +134,16 @@ export function ItineraryPage(): JSX.Element {
       .flatMap((row) => row.items.map((i) => ({ flight: i.flight, passengerName: i.passengerName })));
   }
 
+  function selectedHotels(): HotelStay[] {
+    return hotels.filter((stay) => selected.has(hotelKey(stay)));
+  }
+
   /** Build both versions from the same selection so they can never disagree. */
   function build(withConfirmation: boolean): void {
     const inputs = selectedInputs();
-    setText(buildItinerary(inputs, { includeConfirmation: withConfirmation }));
-    setHtml(buildItineraryHtml(inputs, { includeConfirmation: withConfirmation }));
+    const stays = selectedHotels();
+    setText(buildItinerary(inputs, { includeConfirmation: withConfirmation, hotels: stays }));
+    setHtml(buildItineraryHtml(inputs, { includeConfirmation: withConfirmation, hotels: stays }));
   }
 
   function handleCreate(): void {
@@ -125,7 +172,7 @@ export function ItineraryPage(): JSX.Element {
         // Offer both flavors: mail composers take the rich one, and anything
         // that only understands text (a plain-text email, a chat box) gets the
         // plain version of the same itinerary.
-        const plain = buildItinerary(selectedInputs(), { includeConfirmation });
+        const plain = buildItinerary(selectedInputs(), { includeConfirmation, hotels: selectedHotels() });
         await navigator.clipboard.write([
           new ClipboardItem({
             'text/html': new Blob([html], { type: 'text/html' }),
@@ -149,7 +196,7 @@ export function ItineraryPage(): JSX.Element {
         <div>
           <h1 className="text-xl font-semibold text-slate-100">Itinerary</h1>
           <p className="text-sm text-slate-400">
-            Select flights, then create a shareable itinerary to paste into an email.
+            Select flights and hotel stays, then create a shareable itinerary to paste into an email.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -173,35 +220,74 @@ export function ItineraryPage(): JSX.Element {
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               className={`${inputClass} pl-9`}
-              placeholder="Filter by traveler, route, airline or confirmation"
+              placeholder="Filter by traveler, route, airline, hotel or confirmation"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
 
           <Card className="min-h-0 flex-1 overflow-y-auto">
-            {visibleRows.length === 0 ? (
+            {visibleEntries.length === 0 ? (
               <p className="px-4 py-12 text-center text-sm text-slate-500">
-                {rows.length === 0 ? 'No upcoming flights to include.' : 'No flights match your filter.'}
+                {entries.length === 0
+                  ? 'No upcoming flights or hotel stays to include.'
+                  : 'Nothing matches your filter.'}
               </p>
             ) : (
               <ul>
-                {visibleRows.map((row) => {
+                {visibleEntries.map((entry) => {
+                  const isSelected = selected.has(entry.key);
+                  const rowClass = `flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-slate-800/40 ${
+                    isSelected ? 'bg-brand-600/10' : ''
+                  }`;
+
+                  if (entry.kind === 'hotel') {
+                    const stay = entry.stay;
+                    return (
+                      <li key={entry.key} className="border-b border-slate-800 last:border-0">
+                        <label className={rowClass}>
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={isSelected}
+                            onChange={() => toggle(entry.key)}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                              <Hotel size={14} className="shrink-0 text-slate-500" />
+                              <span className="truncate">{stay.hotelName}</span>
+                              <span className="shrink-0 text-[11px] font-normal text-slate-500">
+                                {HOTEL_PROVIDER_LABELS[stay.provider]}
+                              </span>
+                              {(stay.confirmationNumber ?? stay.bookingReference) && (
+                                <span className="shrink-0 font-mono text-[11px] font-normal tracking-wide text-slate-500">
+                                  {stay.confirmationNumber ?? stay.bookingReference}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400">
+                              {formatStayMoment(stay.checkIn)} → {formatStayMoment(stay.checkOut)}
+                            </p>
+                            {stay.guestNames.length > 0 && (
+                              <p className="mt-0.5 text-xs text-slate-500">{stay.guestNames.join(', ')}</p>
+                            )}
+                          </div>
+                        </label>
+                      </li>
+                    );
+                  }
+
+                  const row = entry.row;
                   const f = row.items[0]!.flight;
-                  const isSelected = selected.has(row.key);
                   const operating = operatingAirline(f);
                   return (
-                    <li key={row.key} className="border-b border-slate-800 last:border-0">
-                      <label
-                        className={`flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-slate-800/40 ${
-                          isSelected ? 'bg-brand-600/10' : ''
-                        }`}
-                      >
+                    <li key={entry.key} className="border-b border-slate-800 last:border-0">
+                      <label className={rowClass}>
                         <input
                           type="checkbox"
                           className="mt-1"
                           checked={isSelected}
-                          onChange={() => toggle(row.key)}
+                          onChange={() => toggle(entry.key)}
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 text-sm font-medium text-slate-200">
@@ -301,8 +387,8 @@ export function ItineraryPage(): JSX.Element {
               </div>
               <p className="text-sm font-medium text-slate-300">Your itinerary appears here</p>
               <p className="mt-1 text-sm text-slate-500">
-                Tick the flights to include — two flights become an Outbound and a Return journey — then
-                choose Create itinerary.
+                Tick the flights and hotel stays to include — two flights become an Outbound and a Return
+                journey, with each stay placed between them by date — then choose Create itinerary.
               </p>
             </Card>
           )}

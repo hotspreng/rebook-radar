@@ -44,6 +44,29 @@ export function formatTime(iso: string | undefined): string {
   return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+/**
+ * A hotel check-in/out ("2026-11-19T15:00:00", or a date-only "2025-06-27") as
+ * "Thu, Nov 19, 2026 · 3:00 PM". Read component-wise, never through `Date`
+ * parsing, because a date-only value would otherwise shift a day in
+ * timezones behind UTC.
+ */
+export function formatStayMoment(value: string): string {
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
+  if (!m) return value;
+  const day = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  const date = day.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  if (m[4] === undefined) return date;
+  const hour = Number(m[4]);
+  const time = `${hour % 12 === 0 ? 12 : hour % 12}:${m[5]} ${hour >= 12 ? 'PM' : 'AM'}`;
+  return `${date} · ${time}`;
+}
+
 /** Total travel time in minutes as "2h 15m". */
 export function formatDuration(minutes: number | undefined): string {
   if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) return '—';

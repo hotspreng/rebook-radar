@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { Airline, Cabin, FareType, FlightSource, PurchaseType } from '../models/common.js';
 import type { Flight } from '../models/Flight.js';
+import type { HotelStay } from '../models/HotelStay.js';
 import { buildItinerary, buildItineraryHtml } from './itinerary.js';
 
 function makeFlight(overrides: Partial<Flight> = {}): Flight {
@@ -331,4 +332,90 @@ test('the formatted version is self-contained email-safe markup', () => {
   // Inline styles only: no stylesheet, script, external asset or class hooks.
   assert.doesNotMatch(html, /<style|<script|<link|<img|class=|https?:\/\//i);
   assert.match(html, /<table/);
+});
+
+// --- hotel stays -----------------------------------------------------------
+
+const MARRIOTT_STAY: HotelStay = {
+  id: 'h1',
+  provider: 'marriott',
+  hotelName: 'Fairfield by Marriott Inn & Suites New York Manhattan/Central Park',
+  address: '538 West 58th Street New York, New York 10019 USA',
+  phone: '+1-212-757-8550',
+  checkIn: '2027-01-06T15:00:00',
+  checkOut: '2027-01-07T11:00:00',
+  nights: 1,
+  guestNames: ['Jane Traveler'],
+  guests: 2,
+  rooms: 1,
+  roomType: '2 Double Beds',
+  confirmationNumber: '2AB345CDEF',
+  createdAt: '2026-10-17T00:00:00Z',
+  updatedAt: '2026-10-17T00:00:00Z',
+};
+
+const AGENT_STAY: HotelStay = {
+  ...MARRIOTT_STAY,
+  id: 'h2',
+  provider: 'frankfurtflyer',
+  hotelName: 'Conrad Hong Kong',
+  address: 'Hong Kong, China',
+  phone: undefined,
+  checkIn: '2027-01-14',
+  checkOut: '2027-01-17',
+  nights: 3,
+  roomType: undefined,
+  confirmationNumber: undefined,
+  bookingReference: 'KABCDE',
+};
+
+test('a hotel stay is listed in date order between the flights it falls between', () => {
+  const text = buildItinerary([outbound('Joshua Sprenger', 'a'), ret('Joshua Sprenger', 'b')], {
+    hotels: [{ ...MARRIOTT_STAY, checkIn: '2027-01-08T15:00:00', checkOut: '2027-01-14T11:00:00' }],
+  });
+  assert.match(text, /^TRAVEL ITINERARY$/m);
+  const out = text.indexOf('OUTBOUND JOURNEY');
+  const stay = text.indexOf('HOTEL STAY');
+  const back = text.indexOf('RETURN JOURNEY');
+  assert.ok(out >= 0 && stay > out && back > stay, 'outbound, then the stay, then the return');
+});
+
+test('a hotel stay lists name, address, check-in/out times, nights, guests and confirmation', () => {
+  const text = buildItinerary([], { hotels: [MARRIOTT_STAY] });
+  assert.match(text, /^HOTEL ITINERARY$/m);
+  assert.match(text, /^Travelers: Jane Traveler$/m);
+  assert.match(text, /^HOTEL STAY$/m);
+  assert.match(text, /^Fairfield by Marriott Inn & Suites New York Manhattan\/Central Park$/m);
+  assert.match(text, /^Address: 538 West 58th Street New York, New York 10019 USA$/m);
+  assert.match(text, /^Phone: \+1-212-757-8550$/m);
+  assert.match(text, /^Check-in: Wednesday, January 6, 2027, from 3:00 PM$/m);
+  assert.match(text, /^Check-out: Thursday, January 7, 2027, by 11:00 AM$/m);
+  assert.match(text, /^Nights: 1$/m);
+  assert.match(text, /^Guest: Jane Traveler \(2 guests\)$/m);
+  assert.match(text, /^Room: 2 Double Beds$/m);
+  assert.match(text, /^Confirmation: 2AB345CDEF$/m);
+});
+
+test('a stay without times shows dates only, and an agent reference names the agent', () => {
+  const text = buildItinerary([], { hotels: [AGENT_STAY] });
+  assert.match(text, /^Check-in: Thursday, January 14, 2027$/m);
+  assert.match(text, /^Check-out: Sunday, January 17, 2027$/m);
+  assert.match(text, /^Booking reference \(via Frankfurtflyer\): KABCDE$/m);
+  assert.doesNotMatch(text, /^Confirmation:/m);
+});
+
+test('hotel confirmation numbers honor the confirmation toggle', () => {
+  const text = buildItinerary([], { hotels: [MARRIOTT_STAY, AGENT_STAY], includeConfirmation: false });
+  assert.doesNotMatch(text, /2AB345CDEF|KABCDE/);
+});
+
+test('the formatted version of a stay carries the same content and escapes markup', () => {
+  const html = buildItineraryHtml([outbound('Joshua Sprenger', 'a')], {
+    hotels: [{ ...MARRIOTT_STAY, hotelName: 'Inn <b>& Suites</b>' }],
+  });
+  assert.match(html, /HOTEL STAY/);
+  assert.match(html, /Inn &lt;b&gt;&amp; Suites&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<b>/);
+  assert.match(html, /2AB345CDEF/);
+  assert.match(html, /Wednesday, January 6, 2027, from 3:00 PM/);
 });

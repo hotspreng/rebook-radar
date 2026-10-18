@@ -6,6 +6,7 @@ import { PriceQuote } from '../models/PriceQuote.js';
 import { PriceHistoryEntry } from '../models/PriceHistory.js';
 import { RebookEvent } from '../models/RebookEvent.js';
 import { CreditReviewItem } from '../models/CreditReview.js';
+import { HotelStay } from '../models/HotelStay.js';
 
 /**
  * Persistence "ports" (hexagonal architecture). Core defines WHAT it needs from
@@ -92,6 +93,16 @@ export interface CreditReviewRepository {
   /** Persist a status/resolution change. */
   update(item: CreditReviewItem): Promise<void>;
   /** Remove an item. */
+  delete(id: string): Promise<void>;
+}
+
+export interface HotelStayRepository {
+  /** All stays, soonest check-in first. */
+  list(): Promise<HotelStay[]>;
+  /** One stay by its {@link hotelStayKey} identity. */
+  getByKey(key: string): Promise<HotelStay | undefined>;
+  create(stay: HotelStay): Promise<void>;
+  update(stay: HotelStay): Promise<void>;
   delete(id: string): Promise<void>;
 }
 

@@ -5,14 +5,18 @@ import {
   EmailTripImportService,
   FlightSource,
   GoogleFlightsSerpApiProvider,
+  HOTEL_EMAIL_QUERIES,
   PriceCheckService,
   PricingComparisonService,
   PurchaseType,
   Recommendation,
+  cancellationMatches,
   estimatePointsFromCash,
   exportFlightsToCsv,
   fetchSerpApiUsage,
+  foldHotelEmails,
   generateId,
+  hotelStayKey,
   isAirlineError,
   operatingAirline,
   type Account,
@@ -25,6 +29,8 @@ import {
   type Flight,
   type FlightRepository,
   type FlightSegment,
+  type HotelStay,
+  type HotelStayRepository,
   type NewAccount,
   type NewFlight,
   type NewPassenger,
@@ -44,7 +50,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, HotelImportResult, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
 import type { SettingsStore } from './SettingsStore.js';
@@ -181,6 +187,7 @@ export interface AppServiceDeps {
   priceHistory: PriceHistoryRepository;
   rebookEvents: RebookEventRepository;
   creditReviews: CreditReviewRepository;
+  hotelStays: HotelStayRepository;
   secrets: SecretStore;
   /** Directory where debug artifacts (raw email/page dumps) are written. */
   debugDir: string;
@@ -451,15 +458,7 @@ export class AppService {
         'from:aircanada.ca newer_than:13m',
       );
     } catch (err) {
-      if (err instanceof GmailAuthError) {
-        // The stored refresh token is dead (expired/revoked). Clear the
-        // connection so the UI prompts a reconnect instead of failing again.
-        await this.deps.secrets
-          .deletePassword(this.gmailSecretKey('refreshToken'))
-          .catch(() => undefined);
-        this.deps.settings.update({ gmailConnected: false });
-        log.warn('Gmail refresh token rejected (invalid_grant) — cleared connection');
-      }
+      await this.clearGmailIfAuthExpired(err);
       throw err;
     }
     const messages = [...southwest, ...united, ...american, ...airCanada];
@@ -759,6 +758,84 @@ export class AppService {
       status: 'dismissed',
       resolvedAt: new Date().toISOString(),
     });
+  }
+
+  // --- Hotel stays ---------------------------------------------------------
+
+  listHotelStays(): Promise<HotelStay[]> {
+    return this.deps.hotelStays.list();
+  }
+
+  /**
+   * Import hotel reservations from Gmail. Each program is searched by its own
+   * sender address (plus a search for confirmations a relative forwarded on),
+   * the emails are folded to the latest state per reservation, and the result
+   * is reconciled with storage: new stays added, re-sent confirmations
+   * refreshed, cancelled reservations removed.
+   */
+  async importHotelStays(): Promise<HotelImportResult> {
+    const source = await this.buildEmailSource(true);
+    if (!source || !(await source.isConnected())) {
+      throw new Error('Gmail is not connected. Connect your account in Settings first.');
+    }
+
+    // Hotel bookings are made well ahead of the stay, so look back further than flights.
+    const window = ' newer_than:24m';
+    const messages = new Map<string, EmailMessage>();
+    try {
+      for (const q of HOTEL_EMAIL_QUERIES) {
+        let found = await source.fetchMessages({ query: q.primary + window, maxResults: 300 });
+        if (found.length === 0 && q.fallback) {
+          found = await source.fetchMessages({ query: q.fallback + window, maxResults: 300 });
+        }
+        log.info('Fetched hotel emails', { source: q.provider, count: found.length });
+        for (const message of found) messages.set(message.id, message);
+      }
+    } catch (err) {
+      await this.clearGmailIfAuthExpired(err);
+      throw err;
+    }
+
+    const folded = foldHotelEmails([...messages.values()]);
+    const now = new Date().toISOString();
+    let added = 0;
+    let updated = 0;
+    let cancelled = 0;
+
+    // Cancellations first, so a later re-booking of the same reservation (which
+    // is in folded.stays) is then re-added rather than deleted.
+    const stored = await this.deps.hotelStays.list();
+    for (const cancellation of folded.cancellations) {
+      for (const stay of stored) {
+        if (cancellationMatches(cancellation, stay) && !folded.stays.some((s) => hotelStayKey(s) === hotelStayKey(stay))) {
+          await this.deps.hotelStays.delete(stay.id);
+          cancelled += 1;
+        }
+      }
+    }
+
+    for (const parsed of folded.stays) {
+      const prior = await this.deps.hotelStays.getByKey(hotelStayKey(parsed));
+      if (prior) {
+        await this.deps.hotelStays.update({ ...parsed, id: prior.id, createdAt: prior.createdAt, updatedAt: now });
+        updated += 1;
+      } else {
+        await this.deps.hotelStays.create({ ...parsed, id: generateId('hotel'), createdAt: now, updatedAt: now });
+        added += 1;
+      }
+    }
+
+    log.info('Hotel import complete', { scanned: messages.size, added, updated, cancelled });
+    this.deps.onEmailProgress?.({ phase: 'done', scanned: messages.size, total: messages.size });
+    return { scanned: messages.size, added, updated, cancelled };
+  }
+
+  /** Forget a Gmail connection whose refresh token Google rejected, so the UI asks to reconnect. */
+  private async clearGmailIfAuthExpired(err: unknown): Promise<void> {
+    if (!(err instanceof GmailAuthError)) return;
+    await this.deps.secrets.deletePassword(this.gmailSecretKey('refreshToken')).catch(() => undefined);
+    this.deps.settings.update({ gmailConnected: false });
+    log.warn('Gmail refresh token rejected (invalid_grant) — cleared connection');
   }
 
   private async buildEmailSource(withRefreshToken: boolean): Promise<GmailMessageSource | null> {

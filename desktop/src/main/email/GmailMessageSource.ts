@@ -343,6 +343,7 @@ export class GmailMessageSource implements EmailMessageSource {
       from: header('From'),
       body,
       snippet: data.snippet,
+      attachments: collectAttachments(data.payload),
     };
   }
 
@@ -402,6 +403,13 @@ function extractBody(part: GmailPart | undefined): string {
     return part.mimeType === 'text/html' ? stripHtml(decoded) : decoded;
   }
   return '';
+}
+
+/** Names of files attached anywhere in the payload tree (contents are not downloaded). */
+function collectAttachments(part: GmailPart | undefined): { filename: string; mimeType?: string }[] {
+  if (!part) return [];
+  const found = part.filename ? [{ filename: part.filename, mimeType: part.mimeType }] : [];
+  return [...found, ...(part.parts ?? []).flatMap(collectAttachments)];
 }
 
 function findByMime(part: GmailPart, mime: string): GmailPart | undefined {

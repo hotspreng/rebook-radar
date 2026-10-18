@@ -59,6 +59,10 @@ export const IPC = {
   reviewApply: 'review:apply',
   reviewDismiss: 'review:dismiss',
 
+  // Hotel stays
+  hotelList: 'hotel:list',
+  hotelImport: 'hotel:import',
+
   // System
   openExternal: 'system:openExternal',
 

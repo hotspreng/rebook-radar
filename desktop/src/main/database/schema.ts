@@ -125,6 +125,32 @@ CREATE TABLE IF NOT EXISTS credit_reviews (
   resolved_at TEXT
 );
 
+-- Imported hotel reservations (Marriott, Hilton, Frankfurtflyer, AMEX Travel).
+-- stay_key is the reservation identity used to de-duplicate re-imports.
+CREATE TABLE IF NOT EXISTS hotel_stays (
+  id TEXT PRIMARY KEY,
+  stay_key TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  hotel_name TEXT NOT NULL,
+  address TEXT,
+  phone TEXT,
+  check_in TEXT NOT NULL,
+  check_out TEXT NOT NULL,
+  nights INTEGER,
+  guest_names_json TEXT NOT NULL DEFAULT '[]',
+  guests INTEGER,
+  rooms INTEGER,
+  room_type TEXT,
+  confirmation_number TEXT,
+  booking_reference TEXT,
+  email_id TEXT,
+  booked_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hotel_stays_key ON hotel_stays(stay_key);
+CREATE INDEX IF NOT EXISTS idx_hotel_stays_check_in ON hotel_stays(check_in);
 CREATE INDEX IF NOT EXISTS idx_flights_passenger ON flights(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_flights_account ON flights(account_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_flight ON price_history(flight_id, recorded_at);
