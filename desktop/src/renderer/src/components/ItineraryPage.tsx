@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AIRLINE_LABELS, HOTEL_PROVIDER_LABELS, buildItinerary, buildItineraryHtml, operatingAirline } from '@swr/core';
+import { AIRLINE_LABELS, HOTEL_PROVIDER_LABELS, buildItinerary, buildItineraryHtml, operatingAirline, suggestHotelStays } from '@swr/core';
 import type { HotelStay } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
 import { ArrowRight, Check, Copy, FileText, Hotel, Search, Wand2, X } from 'lucide-react';
@@ -138,6 +138,16 @@ export function ItineraryPage(): JSX.Element {
     return hotels.filter((stay) => selected.has(hotelKey(stay)));
   }
 
+  // Stays that fall within the trip the ticked flights make up and aren't ticked yet.
+  const suggestions = useMemo(() => {
+    const flightsPicked = rows.filter((row) => selected.has(row.key)).map((row) => row.items[0]!.flight);
+    return suggestHotelStays(flightsPicked, hotels).filter((stay) => !selected.has(hotelKey(stay)));
+  }, [rows, hotels, selected]);
+
+  function addSuggested(stays: HotelStay[]): void {
+    setSelected((prev) => new Set([...prev, ...stays.map(hotelKey)]));
+  }
+
   /** Build both versions from the same selection so they can never disagree. */
   function build(withConfirmation: boolean): void {
     const inputs = selectedInputs();
@@ -225,6 +235,47 @@ export function ItineraryPage(): JSX.Element {
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
+
+          {suggestions.length > 0 && (
+            <div
+              role="status"
+              className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5"
+            >
+              <Hotel size={16} className="mt-0.5 shrink-0 text-amber-300" />
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-medium text-amber-200">
+                  {suggestions.length === 1
+                    ? 'A hotel stay matches these flights'
+                    : `${suggestions.length} hotel stays match these flights`}
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {suggestions.map((stay) => (
+                    <li key={stay.id} className="flex items-center justify-between gap-3 text-xs text-slate-300">
+                      <span className="min-w-0 truncate">
+                        {stay.hotelName}
+                        <span className="text-slate-500">
+                          {' · '}
+                          {formatStayMoment(stay.checkIn)} → {formatStayMoment(stay.checkOut)}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => addSuggested([stay])}
+                        className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/20"
+                      >
+                        Add
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              {suggestions.length > 1 && (
+                <Button variant="secondary" className="shrink-0 !px-2.5 !py-1 text-xs" onClick={() => addSuggested(suggestions)}>
+                  Add all
+                </Button>
+              )}
+            </div>
+          )}
 
           <Card className="min-h-0 flex-1 overflow-y-auto">
             {visibleEntries.length === 0 ? (
