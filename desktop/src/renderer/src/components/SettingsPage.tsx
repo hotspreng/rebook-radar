@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, EmailImportResult, EmailStatus, Passenger, SerpApiKeyUsage } from '@shared/dto';
+import type { AppSettings, EmailStatus, Passenger, SerpApiKeyUsage } from '@shared/dto';
 import { Airline } from '@swr/core';
 import { Activity, Mail, Plug, Plus, RefreshCw, Save, Trash2, Users } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore.js';
+import { runFullImport } from '../lib/importAll.js';
 import { Button, Card, Field, Modal, inputClass } from './ui.js';
 import { formatDateTime } from '../lib/format.js';
 
@@ -607,15 +608,8 @@ function GmailImportCard(): JSX.Element {
   async function handleImport(): Promise<void> {
     setBusy('import');
     try {
-      const r: EmailImportResult = await api.email.import();
-      await useAppStore.getState().refreshFlights();
+      await runFullImport();
       setStatus(await api.email.status());
-      pushToast(
-        'success',
-        `Scanned ${r.scanned} email(s): ${r.imported} added, ${r.updated} updated, ${r.cancelled} cancelled, ${r.skipped} skipped.`,
-      );
-    } catch (err) {
-      pushToast('error', err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(null);
     }
@@ -628,10 +622,11 @@ function GmailImportCard(): JSX.Element {
           <Mail size={18} className="text-brand-400" />
         </div>
         <div className="text-sm">
-          <p className="font-medium text-slate-100">Import trips from Gmail (recommended)</p>
+          <p className="font-medium text-slate-100">Import from Gmail (recommended)</p>
           <p className="mt-0.5 leading-relaxed text-slate-500">
-            Reads your Southwest confirmation emails (read-only) to import trips and the price you paid,
-            and automatically drops trips you’ve cancelled. Nothing leaves this computer except the
+            Reads your airline confirmation emails (read-only) to import trips and the price you paid,
+            and automatically drops trips you’ve cancelled. The same import also brings in hotel stays,
+            rental cars and bus rides for itineraries. Nothing leaves this computer except the
             request to Google; your tokens are encrypted with Windows DPAPI.
           </p>
         </div>
@@ -664,7 +659,7 @@ function GmailImportCard(): JSX.Element {
             <Plug size={15} /> {status.connected ? 'Disconnect' : busy === 'connect' ? 'Connecting…' : 'Connect Gmail'}
           </Button>
           <Button variant="secondary" onClick={handleImport} disabled={!status.connected || busy === 'import'}>
-            <RefreshCw size={15} className={busy === 'import' ? 'animate-spin' : ''} /> Import trips now
+            <RefreshCw size={15} className={busy === 'import' ? 'animate-spin' : ''} /> Import from Gmail
           </Button>
           <div className="text-xs text-slate-500">
             {status.connected ? (

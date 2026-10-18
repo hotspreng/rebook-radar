@@ -62,7 +62,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, HotelImportResult, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, RentalImportResult, BusImportResult, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, HotelImportResult, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, RentalImportResult, BusImportResult, ImportAllResult, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
 import type { SettingsStore } from './SettingsStore.js';
@@ -614,13 +614,63 @@ export class AppService {
 
     this.deps.settings.update({ lastEmailImportAt: new Date().toISOString() });
     log.info('Email import complete', { imported, updated, cancelled, skipped, creditsQueued });
-    this.deps.onEmailProgress?.({
-      phase: 'done',
-      scanned: messages.length,
-      total: messages.length,
-      tripsFound: folded.active.length,
-    });
+    if (!this.importingAll) {
+      this.deps.onEmailProgress?.({
+        phase: 'done',
+        scanned: messages.length,
+        total: messages.length,
+        tripsFound: folded.active.length,
+      });
+    }
     return { scanned: messages.length, imported, updated, cancelled, skipped, creditsQueued };
+  }
+
+  /** True while {@link importAll} runs, so each step stays quiet and only the last reports "done". */
+  private importingAll = false;
+
+  private emitImportDone(scanned: number): void {
+    if (this.importingAll) return;
+    this.deps.onEmailProgress?.({ phase: 'done', scanned, total: scanned });
+  }
+
+  /**
+   * One import for everything: flights first (which also proves Gmail is
+   * connected), then hotel stays, rental cars and bus rides. A failure in one
+   * of the travel steps is reported but doesn't stop the others.
+   */
+  async importAll(): Promise<ImportAllResult> {
+    this.importingAll = true;
+    try {
+      const flights = await this.importFromEmail();
+      let scanned = flights.scanned;
+      const errors: string[] = [];
+
+      const step = async <T extends { scanned: number }>(
+        stage: string,
+        run: () => Promise<T>,
+      ): Promise<T | null> => {
+        this.deps.onEmailProgress?.({ phase: 'scanning', scanned, stage });
+        try {
+          const result = await run();
+          scanned += result.scanned;
+          return result;
+        } catch (err) {
+          log.warn(`${stage} import failed`, { error: err instanceof Error ? err.message : String(err) });
+          errors.push(`${stage}: ${err instanceof Error ? err.message : String(err)}`);
+          return null;
+        }
+      };
+
+      const hotels = await step('Hotels', () => this.importHotelStays());
+      const rentals = await step('Rental cars', () => this.importRentalCars());
+      const buses = await step('Bus rides', () => this.importBusRides());
+
+      this.importingAll = false;
+      this.deps.onEmailProgress?.({ phase: 'done', scanned, total: scanned });
+      return { flights, hotels, rentals, buses, errors };
+    } finally {
+      this.importingAll = false;
+    }
   }
 
   /**
@@ -825,7 +875,7 @@ export class AppService {
     }
 
     log.info('Hotel import complete', { scanned: messages.size, added, updated, cancelled });
-    this.deps.onEmailProgress?.({ phase: 'done', scanned: messages.size, total: messages.size });
+    this.emitImportDone(messages.size);
     return { scanned: messages.size, added, updated, cancelled };
   }
 
@@ -903,7 +953,7 @@ export class AppService {
     }
 
     log.info('Rental car import complete', { scanned: messages.size, added, updated, cancelled });
-    this.deps.onEmailProgress?.({ phase: 'done', scanned: messages.size, total: messages.size });
+    this.emitImportDone(messages.size);
     return { scanned: messages.size, added, updated, cancelled };
   }
 
@@ -953,7 +1003,7 @@ export class AppService {
     }
 
     log.info('Bus import complete', { scanned: messages.size, added, updated, cancelled });
-    this.deps.onEmailProgress?.({ phase: 'done', scanned: messages.size, total: messages.size });
+    this.emitImportDone(messages.size);
     return { scanned: messages.size, added, updated, cancelled };
   }
 

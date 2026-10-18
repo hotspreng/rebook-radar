@@ -76,6 +76,7 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
   handle(IPC.emailConnect, () => service.connectGmail());
   handle(IPC.emailDisconnect, () => service.disconnectGmail());
   handle(IPC.emailImport, () => service.importFromEmail());
+  handle(IPC.emailImportAll, () => service.importAll());
 
   // Monitoring
   handle(IPC.monitorStart, () => monitor.start());

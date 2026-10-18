@@ -41,6 +41,7 @@ export const IPC = {
   emailConnect: 'email:connect',
   emailDisconnect: 'email:disconnect',
   emailImport: 'email:import',
+  emailImportAll: 'email:importAll',
 
   // Monitoring
   monitorStart: 'monitor:start',

@@ -13,6 +13,7 @@ import type {
   EmailStatus,
   FlightWithComparison,
   GmailCredentialsInput,
+  ImportAllResult,
   MonitorStatus,
   PastFlightView,
   PriceTrends,
@@ -88,6 +89,7 @@ const api: SwrApi = {
     connect: () => invoke<EmailStatus>(IPC.emailConnect),
     disconnect: () => invoke<EmailStatus>(IPC.emailDisconnect),
     import: () => invoke<EmailImportResult>(IPC.emailImport),
+    importAll: () => invoke<ImportAllResult>(IPC.emailImportAll),
   },
   monitor: {
     start: () => invoke<MonitorStatus>(IPC.monitorStart),

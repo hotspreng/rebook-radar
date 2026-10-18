@@ -21,6 +21,7 @@ import type {
   EmailStatus,
   FlightWithComparison,
   GmailCredentialsInput,
+  ImportAllResult,
   MonitorStatus,
   PastFlightView,
   PriceTrends,
@@ -87,6 +88,7 @@ export interface SwrApi {
     connect(): Promise<EmailStatus>;
     disconnect(): Promise<EmailStatus>;
     import(): Promise<EmailImportResult>;
+    importAll(): Promise<ImportAllResult>;
   };
   monitor: {
     start(): Promise<MonitorStatus>;

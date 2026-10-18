@@ -113,6 +113,15 @@ export type RentalImportResult = HotelImportResult;
 /** Outcome of importing bus tickets from Gmail. */
 export type BusImportResult = HotelImportResult;
 
+/** Outcome of the single "import everything" action. A step that failed is null and named in `errors`. */
+export interface ImportAllResult {
+  flights: EmailImportResult;
+  hotels: HotelImportResult | null;
+  rentals: RentalImportResult | null;
+  buses: BusImportResult | null;
+  errors: string[];
+}
+
 /** Live progress emitted while an email import is running. */
 export interface EmailImportProgress {
   /** Current stage of the import. */
@@ -123,6 +132,8 @@ export interface EmailImportProgress {
   total?: number;
   /** Active upcoming trips found after parsing, when known. */
   tripsFound?: number;
+  /** Which part of a full import is running ("Hotels"), when it isn't the flights. */
+  stage?: string;
 }
 
 /** Live progress emitted while a "check all prices" sweep is running. */

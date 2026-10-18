@@ -4,7 +4,7 @@ import type { EmailImportProgress } from '@shared/dto';
 import { ArrowRight, Bus, Inbox, MapPin, Users } from 'lucide-react';
 import { Button, Card, CopyButton } from './ui.js';
 import { formatStayMoment } from '../lib/format.js';
-import { useAppStore } from '../store/useAppStore.js';
+import { runFullImport } from '../lib/importAll.js';
 
 const api = window.swr;
 
@@ -15,7 +15,6 @@ function todayKey(): string {
 }
 
 export function BusRidesPage(): JSX.Element {
-  const pushToast = useAppStore((s) => s.pushToast);
   const [rides, setRides] = useState<BusRide[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -46,14 +45,8 @@ export function BusRidesPage(): JSX.Element {
     setImporting(true);
     setProgress(null);
     try {
-      const r = await api.buses.import();
+      await runFullImport();
       await refresh();
-      pushToast(
-        'success',
-        `Scanned ${r.scanned} email(s): ${r.added} added, ${r.updated} updated, ${r.cancelled} cancelled.`,
-      );
-    } catch (err) {
-      pushToast('error', err instanceof Error ? err.message : String(err));
     } finally {
       setImporting(false);
       setProgress(null);
@@ -75,7 +68,9 @@ export function BusRidesPage(): JSX.Element {
           </Button>
           {importing && progress && progress.phase === 'scanning' && (
             <span className="absolute right-0 top-full mt-1 whitespace-nowrap text-[11px] text-slate-400">
-              Reading emails{progress.total ? ` (${progress.scanned} of ${progress.total})` : '…'}
+              {progress.stage
+                ? `Importing ${progress.stage.toLowerCase()}…`
+                : `Reading emails${progress.total ? ` (${progress.scanned} of ${progress.total})` : '…'}`}
             </span>
           )}
         </div>

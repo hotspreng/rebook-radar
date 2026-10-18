@@ -17,6 +17,7 @@ import { FlightFormModal } from './FlightFormModal.js';
 import { FlightDetailDrawer } from './FlightDetailDrawer.js';
 import { AlternativesPanel, getCheaperAlternatives } from './AlternativesPanel.js';
 import { formatDateTime, formatDuration, formatNative, formatPoints, formatTime, formatUsd, originalCashTotal } from '../lib/format.js';
+import { runFullImport } from '../lib/importAll.js';
 
 const api = window.swr;
 
@@ -25,6 +26,7 @@ function importProgressLabel(p: EmailImportProgress): string {
   const scanned = p.total != null ? `${p.scanned}/${p.total}` : `${p.scanned}`;
   const trips =
     p.tripsFound != null ? ` · ${p.tripsFound} trip${p.tripsFound === 1 ? '' : 's'} found` : '';
+  if (p.stage && p.phase !== 'done') return `Importing ${p.stage.toLowerCase()}…`;
   if (p.phase === 'scanning') return `Scanning ${scanned} email${p.scanned === 1 ? '' : 's'}…`;
   if (p.phase === 'parsing') return `Scanned ${scanned} emails${trips}`;
   return `Done · ${p.scanned} email${p.scanned === 1 ? '' : 's'} scanned${trips}`;
@@ -258,14 +260,7 @@ export function Dashboard(): JSX.Element {
     setImporting(true);
     setImportProgress({ phase: 'scanning', scanned: 0, tripsFound: 0 });
     try {
-      const r = await api.email.import();
-      await refreshFlights();
-      pushToast(
-        'success',
-        `Scanned ${r.scanned} email(s): ${r.imported} added, ${r.updated} updated, ${r.cancelled} cancelled, ${r.skipped} skipped.`,
-      );
-    } catch (err) {
-      pushToast('error', err instanceof Error ? err.message : String(err));
+      await runFullImport();
     } finally {
       setImporting(false);
     }
@@ -288,7 +283,7 @@ export function Dashboard(): JSX.Element {
         <div className="flex gap-2">
           <div className="relative">
             <Button variant="secondary" onClick={handleImport} disabled={importing}>
-              <Inbox size={16} className={importing ? 'animate-pulse' : ''} /> Import trips now
+              <Inbox size={16} className={importing ? 'animate-pulse' : ''} /> Import from Gmail
             </Button>
             {importProgress && (
               <span className="absolute left-0 top-full mt-1 whitespace-nowrap text-[11px] text-slate-400">
