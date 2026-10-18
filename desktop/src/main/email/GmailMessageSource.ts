@@ -11,7 +11,7 @@ const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 const GMAIL_BODY_FETCH_BATCH_SIZE = 5;
 const GMAIL_BODY_FETCH_BATCH_DELAY_MS = 1_000;
-const GMAIL_QUOTA_RETRY_DELAYS_MS = [15_000, 30_000, 60_000];
+const GMAIL_QUOTA_RETRY_DELAYS_MS = [15_000, 30_000, 60_000, 60_000, 60_000];
 
 /**
  * Thrown when Gmail rejects the stored refresh token (OAuth `invalid_grant`).
@@ -273,7 +273,7 @@ export class GmailMessageSource implements EmailMessageSource {
     do {
       const params: Record<string, string> = { q: query.query, maxResults: '100' };
       if (pageToken) params.pageToken = pageToken;
-      const { data } = await client.request<GmailListResponse>({ url: `${GMAIL_API}/messages`, params });
+      const { data } = await this.requestWithRetry<GmailListResponse>(client, `${GMAIL_API}/messages`, params, 'list');
       for (const m of data.messages ?? []) ids.push(m.id);
       pageToken = data.nextPageToken;
     } while (pageToken && ids.length < cap);
@@ -301,30 +301,42 @@ export class GmailMessageSource implements EmailMessageSource {
 
   // --- internals -----------------------------------------------------------
 
-  private async fetchMessageBodyWithRetry(
+  /**
+   * One Gmail API call, retried with a growing wait when Gmail's per-minute
+   * quota is hit. A large import (hundreds of bodies, then several more
+   * searches) can briefly use up the minute's budget; waiting lets it refill.
+   */
+  private async requestWithRetry<T>(
     client: OAuth2Client,
-    id: string,
-  ): Promise<EmailMessage> {
+    url: string,
+    params: Record<string, string>,
+    what: string,
+  ): Promise<{ data: T }> {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        const { data } = await client.request<GmailGetResponse>({
-          url: `${GMAIL_API}/messages/${id}`,
-          params: { format: 'full' },
-        });
-        return this.toEmailMessage(data);
+        return await client.request<T>({ url, params });
       } catch (err) {
         if (!isGmailQuotaError(err) || attempt >= GMAIL_QUOTA_RETRY_DELAYS_MS.length) {
           throw err;
         }
         const retryMs = GMAIL_QUOTA_RETRY_DELAYS_MS[attempt] ?? 60_000;
-        this.log.warn('Gmail quota/rate limit reached while fetching body; retrying', {
-          id,
-          retryMs,
-          attempt: attempt + 1,
-        });
+        this.log.warn(`Gmail quota/rate limit reached during ${what}; retrying`, { retryMs, attempt: attempt + 1 });
         await delay(retryMs);
       }
     }
+  }
+
+  private async fetchMessageBodyWithRetry(
+    client: OAuth2Client,
+    id: string,
+  ): Promise<EmailMessage> {
+    const { data } = await this.requestWithRetry<GmailGetResponse>(
+      client,
+      `${GMAIL_API}/messages/${id}`,
+      { format: 'full' },
+      'body fetch',
+    );
+    return this.toEmailMessage(data);
   }
 
   private toEmailMessage(data: GmailGetResponse): EmailMessage {
