@@ -30,10 +30,15 @@ export function cancellationMatches(
   const same = (a?: string, b?: string): boolean => !!a && !!b && a.toUpperCase() === b.toUpperCase();
   if (same(cancellation.confirmationNumber, stay.confirmationNumber)) return true;
   if (same(cancellation.bookingReference, stay.bookingReference)) return true;
-  if (cancellation.confirmationNumber || cancellation.bookingReference) return false;
+  // Both sides carry a number and they differ: this is a different booking of
+  // the same hotel (e.g. one re-booked for other dates), so leave it alone.
+  const cancelHasId = !!(cancellation.confirmationNumber || cancellation.bookingReference);
+  const stayHasId = !!(stay.confirmationNumber || stay.bookingReference);
+  if (cancelHasId && stayHasId) return false;
+  const plainName = (name: string): string => name.toLowerCase().replace(/^the\s+/, '').trim();
   return (
     !!cancellation.hotelName &&
-    cancellation.hotelName.toLowerCase() === stay.hotelName.toLowerCase() &&
+    plainName(cancellation.hotelName) === plainName(stay.hotelName) &&
     cancellation.checkInDate === stay.checkIn.slice(0, 10)
   );
 }

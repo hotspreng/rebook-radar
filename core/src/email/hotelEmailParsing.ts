@@ -211,7 +211,13 @@ function buildStay(fields: Omit<StayFields, 'nights' | 'guestNames'> & { guestNa
 function parseMarriott(m: EmailMessage, lines: string[], text: string): ProviderOutcome {
   const subject = m.subject ?? '';
   const roomConfirmations = [...text.matchAll(/Room\s*\d+\s*Confirmation Number:?\s*([A-Z0-9]{6,})/gi)].map((r) => r[1]!);
-  const confirmationNumber = subject.match(/#\s*([A-Z0-9]{6,})/i)?.[1]?.toUpperCase() ?? roomConfirmations[0]?.toUpperCase();
+  const subjectNumber = subject.match(/#\s*([A-Z0-9]{6,})/i)?.[1]?.toUpperCase();
+  // Cancellation emails list their own "CANCELLATION NUMBER" in the subject and
+  // put the reservation's number under a "CONFIRMATION NUMBER" label.
+  const labeledNumber = labelValue(lines, /confirmation number/)?.match(/^[A-Z0-9]{6,}$/i)?.[0]?.toUpperCase();
+  const confirmationNumber = CANCELLATION_SUBJECT.test(subject)
+    ? labeledNumber ?? roomConfirmations[0]?.toUpperCase()
+    : subjectNumber ?? labeledNumber ?? roomConfirmations[0]?.toUpperCase();
 
   const subjectName = subject.match(/#\s*[A-Z0-9]+\s+for\s+(.+)$/i)?.[1]?.trim();
   const checkInLine = lines.findIndex((l) => /^check-?in\b/i.test(l));
@@ -351,13 +357,26 @@ function parseHilton(m: EmailMessage, lines: string[], text: string): ProviderOu
  * (`Itinerary_<Surname>_<date>_<City>_<REF>.pdf`).
  */
 function parseFrankfurtflyer(m: EmailMessage, lines: string[], text: string): ProviderOutcome {
-  let bookingReference: string | undefined;
+  // Cancellations name the booking in the subject: "… | Ref: VEKCDI".
+  let bookingReference = m.subject?.match(/\bRef:?\s*([A-Z0-9]{5,8})\b/i)?.[1]?.toUpperCase();
   for (const attachment of m.attachments ?? []) {
+    if (bookingReference) break;
     const ref = attachment.filename.match(/_([A-Z0-9]{5,8})\.pdf$/i)?.[1];
-    if (ref && /^itinerary/i.test(attachment.filename)) {
-      bookingReference = ref.toUpperCase();
-      break;
-    }
+    if (ref && /^itinerary/i.test(attachment.filename)) bookingReference = ref.toUpperCase();
+  }
+
+  // "Your booking for the Conrad Hong Kong from 2025/06/27 to 2025/06/29 was successfully cancelled."
+  const cancelled = text.match(
+    /booking for (?:the )?(.+?) from (\d{4})\/(\d{2})\/(\d{2}) to (\d{4})\/(\d{2})\/(\d{2})/i,
+  );
+  if (cancelled) {
+    const stay = buildStay({
+      hotelName: cancelled[1]!.trim(),
+      checkIn: isoDate(Number(cancelled[2]), Number(cancelled[3]), Number(cancelled[4])),
+      checkOut: isoDate(Number(cancelled[5]), Number(cancelled[6]), Number(cancelled[7])),
+      bookingReference,
+    });
+    return { bookingReference, stays: stay ? [stay] : [] };
   }
 
   const dates = text.match(/(\d{4})\/(\d{2})\/(\d{2})\s*[-–]\s*(\d{4})\/(\d{2})\/(\d{2})/);
@@ -445,7 +464,7 @@ function parseAmex(m: EmailMessage, lines: string[], text: string): ProviderOutc
     if (stay) stays.push(stay);
   });
 
-  return { bookingReference, stays };
+  return { bookingReference, confirmationNumber: stays.length === 1 ? stays[0]!.confirmationNumber : undefined, stays };
 }
 
 const PARSERS: Record<HotelProvider, (m: EmailMessage, lines: string[], text: string) => ProviderOutcome> = {

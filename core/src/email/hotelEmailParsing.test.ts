@@ -323,9 +323,9 @@ test('fold: a cancellation removes the reservation and is reported', () => {
   const cancel = msg({
     id: 'mar3',
     internalDate: MARRIOTT.internalDate + 86_400_000,
-    subject: 'Reservation Cancellation #2AB345CDEF',
+    subject: 'Reservation Cancellation #ZZ9YY8XX7W for Fairfield by Marriott',
     from: 'Marriott Bonvoy Reservations <reservations@res-marriott.com>',
-    body: 'Your reservation has been cancelled.',
+    body: 'Your reservation is cancelled.\nCANCELLATION NUMBER:\nZZ9YY8XX7W\nCONFIRMATION NUMBER:\n2AB345CDEF\nCHECK-IN\nThu, Nov 19, 2026\nCHECK-OUT\nFri, Nov 20, 2026',
   });
   const result = foldHotelEmails([MARRIOTT, cancel]);
   assert.equal(result.stays.length, 0);
@@ -336,9 +336,9 @@ test('fold: a booking after a cancellation revives the reservation', () => {
   const cancel = msg({
     id: 'mar3',
     internalDate: MARRIOTT.internalDate + 86_400_000,
-    subject: 'Reservation Cancellation #2AB345CDEF',
+    subject: 'Reservation Cancellation #ZZ9YY8XX7W for Fairfield by Marriott',
     from: 'Marriott Bonvoy Reservations <reservations@res-marriott.com>',
-    body: 'Your reservation has been cancelled.',
+    body: 'Your reservation is cancelled.\nCANCELLATION NUMBER:\nZZ9YY8XX7W\nCONFIRMATION NUMBER:\n2AB345CDEF',
   });
   const rebooked = { ...MARRIOTT, id: 'mar4', internalDate: MARRIOTT.internalDate + 2 * 86_400_000 };
   assert.equal(foldHotelEmails([MARRIOTT, cancel, rebooked]).stays.length, 1);
@@ -364,4 +364,191 @@ test('a cancellation email with no identifiers is ignored', () => {
     body: 'Book direct.',
   });
   assert.deepEqual(parseHotelEmail(promo), []);
+});
+
+// Real cancellation layouts, with made-up travelers and numbers.
+
+const MARRIOTT_CANCEL = msg({
+  id: 'mar-cx',
+  internalDate: Date.parse('2026-10-13T17:14:00Z'),
+  subject: 'Reservation Cancellation #11A2B3C4D5 for Courtyard by Marriott Binghamton',
+  from: 'Courtyard By Marriott Reservations <reservations@res-marriott.com>',
+  body: `
+Courtyard by Marriott Binghamton
+3801 Vestal Parkway East Vestal, New York 13850
+USA
++1-607-644-1000
+Greetings, Jane Traveler.
+Your reservation is cancelled.
+CANCELLATION NUMBER:
+11A2B3C4D5
+CONFIRMATION NUMBER:
+99XYZ8WV7U
+CHECK-IN
+Fri, Oct 23, 2026
+CHECK-OUT
+Sat, Oct 24, 2026
+Explore Now. Travel Whenever.
+`,
+});
+
+const MARRIOTT_BINGHAMTON = msg({
+  id: 'mar-bk',
+  internalDate: Date.parse('2026-10-01T12:00:00Z'),
+  subject: 'Reservation Confirmation #99XYZ8WV7U for Courtyard by Marriott Binghamton',
+  from: 'Courtyard By Marriott Reservations <reservations@res-marriott.com>',
+  body: `
+Courtyard by Marriott Binghamton
+3801 Vestal Parkway East Vestal, New York 13850
+USA
++1-607-644-1000
+Thank you for booking with us,
+Jane Traveler.
+CHECK-IN
+Fri, Oct 23, 2026
+03:00 PM
+CHECK-OUT
+Sat, Oct 24, 2026
+11:00 AM
+Room 1 Confirmation Number: 99XYZ8WV7U
+1 King Bed
+Guests per room: 1 Adult
+`,
+});
+
+test('Marriott cancellation: the reservation number is the CONFIRMATION number, not the subject', () => {
+  const [event] = parseHotelEmail(MARRIOTT_CANCEL);
+  assert.equal(event?.type, 'cancelled');
+  assert.equal(event!.confirmationNumber, '99XYZ8WV7U');
+  assert.equal(event!.stay?.hotelName, 'Courtyard by Marriott Binghamton');
+  assert.equal(event!.stay?.checkIn, '2026-10-23');
+});
+
+test('fold: a Marriott cancellation removes the stay it names', () => {
+  const result = foldHotelEmails([MARRIOTT_BINGHAMTON, MARRIOTT, MARRIOTT_CANCEL]);
+  assert.deepEqual(result.stays.map((s) => s.confirmationNumber), ['2AB345CDEF']);
+  assert.equal(result.cancellations[0]?.confirmationNumber, '99XYZ8WV7U');
+});
+
+const FF_HEADER = {
+  from: 'Frankfurtflyer <hotels@cube-travel.de>',
+};
+
+const FF_CANCEL = msg({
+  ...FF_HEADER,
+  id: 'ff-cx',
+  internalDate: Date.parse('2025-05-25T02:07:00Z'),
+  subject: 'Cancellation confirmation on Frankfurtflyer | Ref: VEKCDI',
+  body: `
+Hello Jane Traveler,
+Your booking for the Conrad Hong Kong from 2025/06/27 to 2025/06/29 was successfully cancelled.
+Cancellation number: HHL CN HKG 27JUN /CX-1707254406, HHL CN RESERVATION CANCELED-NEXT TI
+Best regards
+`,
+});
+
+const FF_FIRST_BOOKING = {
+  ...FRANKFURTFLYER,
+  id: 'ff0',
+  internalDate: Date.parse('2025-05-25T02:03:00Z'),
+  body: FRANKFURTFLYER.body.replace('2025/06/30 (3 nights)', '2025/06/29 (2 nights)'),
+  attachments: [{ filename: 'Itinerary_Traveler_2025-06-27_Hong_Kong_VEKCDI.pdf' }],
+};
+
+test('Frankfurtflyer cancellation: identified by the Ref in the subject, with the cancelled dates', () => {
+  const [event] = parseHotelEmail(FF_CANCEL);
+  assert.equal(event?.type, 'cancelled');
+  assert.equal(event!.bookingReference, 'VEKCDI');
+  assert.equal(event!.stay?.hotelName, 'Conrad Hong Kong');
+  assert.equal(event!.stay?.checkIn, '2025-06-27');
+  assert.equal(event!.stay?.checkOut, '2025-06-29');
+});
+
+test('fold: cancelling one Frankfurtflyer booking leaves the re-booked one for the same hotel', () => {
+  const result = foldHotelEmails([FF_FIRST_BOOKING, FRANKFURTFLYER, FF_CANCEL]);
+  assert.deepEqual(result.stays.map((s) => s.bookingReference), ['KABCDE']);
+});
+
+test('a cancellation naming a booking falls back to hotel and date for a stay with no reference', () => {
+  const noRef = parseHotelEmail({ ...FRANKFURTFLYER, attachments: undefined })[0]!.stay!;
+  const cancel = parseHotelEmail({
+    ...FF_CANCEL,
+    body: FF_CANCEL.body.replace('2025/06/29', '2025/06/30'),
+  })[0]!;
+  const result = foldHotelEmails([{ ...FRANKFURTFLYER, attachments: undefined }, { ...FF_CANCEL, body: FF_CANCEL.body.replace('2025/06/29', '2025/06/30') }]);
+  assert.equal(noRef.bookingReference, undefined);
+  assert.equal(cancel.bookingReference, 'VEKCDI');
+  assert.equal(result.stays.length, 0);
+});
+
+const AMEX_CANCEL = msg({
+  id: 'amex-cx',
+  internalDate: Date.parse('2025-06-14T23:05:00Z'),
+  subject: 'Cancellation: your trip to Beijing',
+  from: 'American Express <AmericanExpress@welcome.americanexpress.com>',
+  body: `
+Here are your cancellation details
+JANE Q TRAVELER
+Your trip #7011-5369 has been cancelled
+Your trip has been successfully cancelled.
+Trip to Beijing
+Jun 25, 2025 - Jun 27, 2025
+Wednesday, June 25, 2025
+The Ritz-carlton, Beijing
+The Ritz-carlton, Beijing
+
+83A Jianguo Road
+Beijing
+Beijing, China, 100025
++86 1059088888
+Hotel Confirmation #: 9060000000001
+Check-in:
+Wednesday, June 25, 2025
+Check-out:
+Friday, June 27, 2025
+Number of Nights: 2
+Room 1
+Guest Name: Jane Traveler
+Number of Guests: 3
+Room Type: Deluxe Room, 2 Double Beds, Non
+Smoking
+Cancellation Policy:
+There is no charge for cancellations made before 23:59 on June 24, 2025.
+Room 2
+Guest Name: Jane Traveler
+Number of Guests: 2
+Room Type: Deluxe Room, 2 Double Beds, Non
+Smoking
+`,
+});
+
+const AMEX_BEIJING = msg({
+  ...AMEX_CANCEL,
+  id: 'amex-bk',
+  internalDate: Date.parse('2025-05-01T12:00:00Z'),
+  subject: 'Confirmed: your trip to Beijing',
+  body: AMEX_CANCEL.body.replace('has been cancelled', 'is confirmed'),
+});
+
+test('AMEX cancellation: trip number and the hotel confirmation are both captured', () => {
+  const [event] = parseHotelEmail(AMEX_CANCEL);
+  assert.equal(event?.type, 'cancelled');
+  assert.equal(event!.bookingReference, '7011-5369');
+  assert.equal(event!.confirmationNumber, '9060000000001');
+  assert.equal(event!.stay?.checkIn, '2025-06-25');
+});
+
+test('AMEX booking without check-in times keeps dates only and counts every room', () => {
+  const [event] = parseHotelEmail(AMEX_BEIJING);
+  const stay = event!.stay!;
+  assert.equal(stay.checkIn, '2025-06-25');
+  assert.equal(stay.checkOut, '2025-06-27');
+  assert.equal(stay.rooms, 2);
+  assert.equal(stay.guests, 5);
+  assert.equal(stay.address, '83A Jianguo Road, Beijing, Beijing, China, 100025');
+});
+
+test('fold: an AMEX trip cancellation removes the stay booked under that trip', () => {
+  const result = foldHotelEmails([AMEX_BEIJING, AMEX, AMEX_CANCEL]);
+  assert.deepEqual(result.stays.map((s) => s.bookingReference), ['ZO-AX1023-00001']);
 });
