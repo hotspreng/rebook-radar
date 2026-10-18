@@ -17,6 +17,7 @@ import type {
   PastFlightView,
   PriceTrends,
   PriceUpdateEvent,
+  RentalImportResult,
   SavingsReport,
   SerpApiKeyUsage,
   SetPasswordInput,
@@ -29,6 +30,7 @@ import type {
   NewFlight,
   NewPassenger,
   Passenger,
+  RentalCar,
 } from '@swr/core';
 
 const invoke = <T>(channel: string, arg?: unknown): Promise<T> =>
@@ -103,6 +105,10 @@ const api: SwrApi = {
   hotels: {
     list: () => invoke<HotelStay[]>(IPC.hotelList),
     import: () => invoke<HotelImportResult>(IPC.hotelImport),
+  },
+  rentals: {
+    list: () => invoke<RentalCar[]>(IPC.rentalList),
+    import: () => invoke<RentalImportResult>(IPC.rentalImport),
   },
   exportCsv: () => invoke<{ saved: boolean; path?: string }>(IPC.exportCsv),
   openExternal: (url: string) => invoke<void>(IPC.openExternal, url),

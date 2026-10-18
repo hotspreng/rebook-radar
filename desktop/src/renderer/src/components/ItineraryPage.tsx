@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AIRLINE_LABELS, HOTEL_PROVIDER_LABELS, buildItinerary, buildItineraryHtml, operatingAirline, suggestHotelStays } from '@swr/core';
-import type { HotelStay } from '@swr/core';
+import { AIRLINE_LABELS, HOTEL_PROVIDER_LABELS, RENTAL_PROVIDER_LABELS, buildItinerary, buildItineraryHtml, operatingAirline, suggestHotelStays, suggestRentalCars } from '@swr/core';
+import type { HotelStay, RentalCar } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
-import { ArrowRight, Check, Copy, FileText, Hotel, Search, Wand2, X } from 'lucide-react';
+import { ArrowRight, Car, Check, Copy, FileText, Hotel, Search, Wand2, X } from 'lucide-react';
 import { Button, Card, inputClass } from './ui.js';
 import { formatDateTime, formatStayMoment } from '../lib/format.js';
 import { useAppStore } from '../store/useAppStore.js';
@@ -15,12 +15,22 @@ interface JourneyRow {
   items: FlightWithComparison[];
 }
 
-/** A flight row or a hotel stay, listed together in date order. */
+/** A flight row, hotel stay or car rental, listed together in date order. */
 type ListEntry =
   | { kind: 'flight'; key: string; sortKey: string; row: JourneyRow }
-  | { kind: 'hotel'; key: string; sortKey: string; stay: HotelStay };
+  | { kind: 'hotel'; key: string; sortKey: string; stay: HotelStay }
+  | { kind: 'car'; key: string; sortKey: string; car: RentalCar };
 
 const hotelKey = (stay: HotelStay): string => `hotel:${stay.id}`;
+const carKey = (car: RentalCar): string => `car:${car.id}`;
+
+/** A hotel stay or rental offered because it falls within the ticked flights' trip. */
+interface Suggestion {
+  key: string;
+  kind: 'hotel' | 'car';
+  title: string;
+  when: string;
+}
 
 /**
  * Travelers booked together are tracked as one flight each. Group those that
@@ -60,9 +70,11 @@ export function ItineraryPage(): JSX.Element {
   const [generated, setGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
   const [hotels, setHotels] = useState<HotelStay[]>([]);
+  const [cars, setCars] = useState<RentalCar[]>([]);
 
   useEffect(() => {
     void api.hotels.list().then(setHotels);
+    void api.rentals.list().then(setCars);
   }, []);
 
   const rows = useMemo(() => {
@@ -91,13 +103,28 @@ export function ItineraryPage(): JSX.Element {
         sortKey: stay.checkIn.length > 10 ? stay.checkIn.slice(0, 16) : `${stay.checkIn}T15:00`,
         stay,
       }));
-    return [...flightEntries, ...hotelEntries].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-  }, [rows, hotels]);
+    const carEntries: ListEntry[] = cars
+      .filter((car) => car.returnAt.slice(0, 10) >= todayKey)
+      .map((car) => ({
+        kind: 'car',
+        key: carKey(car),
+        sortKey: car.pickupAt.length > 10 ? car.pickupAt.slice(0, 16) : `${car.pickupAt}T12:00`,
+        car,
+      }));
+    return [...flightEntries, ...hotelEntries, ...carEntries].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }, [rows, hotels, cars]);
 
   const visibleEntries = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return entries;
     return entries.filter((entry) => {
+      if (entry.kind === 'car') {
+        const c = entry.car;
+        return [c.pickupLocation, c.returnLocation, c.confirmationNumber, RENTAL_PROVIDER_LABELS[c.provider], c.driverName ?? '']
+          .join(' ')
+          .toLowerCase()
+          .includes(q);
+      }
       if (entry.kind === 'hotel') {
         const s = entry.stay;
         return [s.hotelName, s.address, s.confirmationNumber, s.bookingReference, HOTEL_PROVIDER_LABELS[s.provider], ...s.guestNames]
@@ -138,22 +165,48 @@ export function ItineraryPage(): JSX.Element {
     return hotels.filter((stay) => selected.has(hotelKey(stay)));
   }
 
-  // Stays that fall within the trip the ticked flights make up and aren't ticked yet.
-  const suggestions = useMemo(() => {
-    const flightsPicked = rows.filter((row) => selected.has(row.key)).map((row) => row.items[0]!.flight);
-    return suggestHotelStays(flightsPicked, hotels).filter((stay) => !selected.has(hotelKey(stay)));
-  }, [rows, hotels, selected]);
+  function selectedCars(): RentalCar[] {
+    return cars.filter((car) => selected.has(carKey(car)));
+  }
 
-  function addSuggested(stays: HotelStay[]): void {
-    setSelected((prev) => new Set([...prev, ...stays.map(hotelKey)]));
+  // Stays and rentals that fall within the trip the ticked flights make up and aren't ticked yet.
+  const suggestions = useMemo<Suggestion[]>(() => {
+    const flightsPicked = rows.filter((row) => selected.has(row.key)).map((row) => row.items[0]!.flight);
+    const stays = suggestHotelStays(flightsPicked, hotels)
+      .filter((stay) => !selected.has(hotelKey(stay)))
+      .map<Suggestion>((stay) => ({
+        key: hotelKey(stay),
+        kind: 'hotel',
+        title: stay.hotelName,
+        when: `${formatStayMoment(stay.checkIn)} → ${formatStayMoment(stay.checkOut)}`,
+      }));
+    const rentals = suggestRentalCars(flightsPicked, cars)
+      .filter((car) => !selected.has(carKey(car)))
+      .map<Suggestion>((car) => ({
+        key: carKey(car),
+        kind: 'car',
+        title: `${RENTAL_PROVIDER_LABELS[car.provider]} · ${car.pickupLocation}`,
+        when: `${formatStayMoment(car.pickupAt)} → ${formatStayMoment(car.returnAt)}`,
+      }));
+    return [...stays, ...rentals];
+  }, [rows, hotels, cars, selected]);
+
+  const suggestionNoun = suggestions.every((s) => s.kind === 'hotel')
+    ? 'hotel stay'
+    : suggestions.every((s) => s.kind === 'car')
+      ? 'car rental'
+      : 'hotel stay or car rental';
+
+  function addSuggested(items: Suggestion[]): void {
+    setSelected((prev) => new Set([...prev, ...items.map((s) => s.key)]));
   }
 
   /** Build both versions from the same selection so they can never disagree. */
   function build(withConfirmation: boolean): void {
     const inputs = selectedInputs();
-    const stays = selectedHotels();
-    setText(buildItinerary(inputs, { includeConfirmation: withConfirmation, hotels: stays }));
-    setHtml(buildItineraryHtml(inputs, { includeConfirmation: withConfirmation, hotels: stays }));
+    const options = { includeConfirmation: withConfirmation, hotels: selectedHotels(), rentals: selectedCars() };
+    setText(buildItinerary(inputs, options));
+    setHtml(buildItineraryHtml(inputs, options));
   }
 
   function handleCreate(): void {
@@ -182,7 +235,11 @@ export function ItineraryPage(): JSX.Element {
         // Offer both flavors: mail composers take the rich one, and anything
         // that only understands text (a plain-text email, a chat box) gets the
         // plain version of the same itinerary.
-        const plain = buildItinerary(selectedInputs(), { includeConfirmation, hotels: selectedHotels() });
+        const plain = buildItinerary(selectedInputs(), {
+          includeConfirmation,
+          hotels: selectedHotels(),
+          rentals: selectedCars(),
+        });
         await navigator.clipboard.write([
           new ClipboardItem({
             'text/html': new Blob([html], { type: 'text/html' }),
@@ -206,7 +263,7 @@ export function ItineraryPage(): JSX.Element {
         <div>
           <h1 className="text-xl font-semibold text-slate-100">Itinerary</h1>
           <p className="text-sm text-slate-400">
-            Select flights and hotel stays, then create a shareable itinerary to paste into an email.
+            Select flights, hotel stays and car rentals, then create a shareable itinerary to paste into an email.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -230,7 +287,7 @@ export function ItineraryPage(): JSX.Element {
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               className={`${inputClass} pl-9`}
-              placeholder="Filter by traveler, route, airline, hotel or confirmation"
+              placeholder="Filter by traveler, route, airline, hotel, rental or confirmation"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -241,26 +298,30 @@ export function ItineraryPage(): JSX.Element {
               role="status"
               className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5"
             >
-              <Hotel size={16} className="mt-0.5 shrink-0 text-amber-300" />
+              {suggestions.some((s) => s.kind === 'hotel') ? (
+                <Hotel size={16} className="mt-0.5 shrink-0 text-amber-300" />
+              ) : (
+                <Car size={16} className="mt-0.5 shrink-0 text-amber-300" />
+              )}
               <div className="min-w-0 flex-1 text-sm">
                 <p className="font-medium text-amber-200">
                   {suggestions.length === 1
-                    ? 'A hotel stay matches these flights'
-                    : `${suggestions.length} hotel stays match these flights`}
+                    ? `A ${suggestionNoun} matches these flights`
+                    : `${suggestions.length} ${suggestionNoun === 'hotel stay or car rental' ? 'stays and rentals' : `${suggestionNoun}s`} match these flights`}
                 </p>
                 <ul className="mt-1 space-y-1">
-                  {suggestions.map((stay) => (
-                    <li key={stay.id} className="flex items-center justify-between gap-3 text-xs text-slate-300">
+                  {suggestions.map((item) => (
+                    <li key={item.key} className="flex items-center justify-between gap-3 text-xs text-slate-300">
                       <span className="min-w-0 truncate">
-                        {stay.hotelName}
+                        {item.title}
                         <span className="text-slate-500">
                           {' · '}
-                          {formatStayMoment(stay.checkIn)} → {formatStayMoment(stay.checkOut)}
+                          {item.when}
                         </span>
                       </span>
                       <button
                         type="button"
-                        onClick={() => addSuggested([stay])}
+                        onClick={() => addSuggested([item])}
                         className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 font-medium text-amber-200 hover:bg-amber-500/20"
                       >
                         Add
@@ -281,7 +342,7 @@ export function ItineraryPage(): JSX.Element {
             {visibleEntries.length === 0 ? (
               <p className="px-4 py-12 text-center text-sm text-slate-500">
                 {entries.length === 0
-                  ? 'No upcoming flights or hotel stays to include.'
+                  ? 'No upcoming flights, hotel stays or rentals to include.'
                   : 'Nothing matches your filter.'}
               </p>
             ) : (
@@ -291,6 +352,38 @@ export function ItineraryPage(): JSX.Element {
                   const rowClass = `flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-slate-800/40 ${
                     isSelected ? 'bg-brand-600/10' : ''
                   }`;
+
+                  if (entry.kind === 'car') {
+                    const car = entry.car;
+                    return (
+                      <li key={entry.key} className="border-b border-slate-800 last:border-0">
+                        <label className={rowClass}>
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={isSelected}
+                            onChange={() => toggle(entry.key)}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-200">
+                              <Car size={14} className="shrink-0 text-slate-500" />
+                              <span className="truncate">{car.pickupLocation}</span>
+                              <span className="shrink-0 text-[11px] font-normal text-slate-500">
+                                {RENTAL_PROVIDER_LABELS[car.provider]}
+                              </span>
+                              <span className="shrink-0 font-mono text-[11px] font-normal tracking-wide text-slate-500">
+                                {car.confirmationNumber}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400">
+                              {formatStayMoment(car.pickupAt)} → {formatStayMoment(car.returnAt)}
+                            </p>
+                            {car.driverName && <p className="mt-0.5 text-xs text-slate-500">{car.driverName}</p>}
+                          </div>
+                        </label>
+                      </li>
+                    );
+                  }
 
                   if (entry.kind === 'hotel') {
                     const stay = entry.stay;
@@ -438,8 +531,8 @@ export function ItineraryPage(): JSX.Element {
               </div>
               <p className="text-sm font-medium text-slate-300">Your itinerary appears here</p>
               <p className="mt-1 text-sm text-slate-500">
-                Tick the flights and hotel stays to include — two flights become an Outbound and a Return
-                journey, with each stay placed between them by date — then choose Create itinerary.
+                Tick the flights, hotel stays and car rentals to include — two flights become an Outbound and a
+                Return journey, with each stay or rental placed between them by date — then choose Create itinerary.
               </p>
             </Card>
           )}

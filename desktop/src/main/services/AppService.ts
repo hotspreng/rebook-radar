@@ -9,16 +9,20 @@ import {
   PriceCheckService,
   PricingComparisonService,
   PurchaseType,
+  RENTAL_EMAIL_QUERIES,
   Recommendation,
   cancellationMatches,
   estimatePointsFromCash,
   exportFlightsToCsv,
   fetchSerpApiUsage,
   foldHotelEmails,
+  foldRentalEmails,
   generateId,
   hotelStayKey,
   isAirlineError,
   operatingAirline,
+  rentalCancellationMatches,
+  rentalCarKey,
   type Account,
   type AccountCredentials,
   type AccountRepository,
@@ -43,6 +47,8 @@ import {
   type QuoteRepository,
   type RebookEvent,
   type RebookEventRepository,
+  type RentalCar,
+  type RentalCarRepository,
   type CreditReviewItem,
   type CreditReviewRepository,
   type MileageCreditEvent,
@@ -50,7 +56,7 @@ import {
   type SecretStore,
 } from '@swr/core';
 import { logger } from '@swr/core';
-import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, HotelImportResult, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
+import type { AppSettings, CreateAccountInput, CreditReviewView, EmailImportProgress, EmailImportResult, EmailStatus, FlightWithComparison, GmailCredentialsInput, HotelImportResult, PastFlightView, PriceCheckProgress, PriceTrends, PriceTrendBucket, AirlineTrendSummary, RebookEventView, RentalImportResult, SavingsBucket, SavingsReport, SerpApiKeyUsage } from '../../shared/dto.js';
 import type { TestLoginResult } from '../../shared/api.js';
 import { GmailMessageSource, GmailAuthError } from '../email/GmailMessageSource.js';
 import type { SettingsStore } from './SettingsStore.js';
@@ -188,6 +194,7 @@ export interface AppServiceDeps {
   rebookEvents: RebookEventRepository;
   creditReviews: CreditReviewRepository;
   hotelStays: HotelStayRepository;
+  rentalCars: RentalCarRepository;
   secrets: SecretStore;
   /** Directory where debug artifacts (raw email/page dumps) are written. */
   debugDir: string;
@@ -780,22 +787,7 @@ export class AppService {
     }
 
     // Hotel bookings are made well ahead of the stay, so look back further than flights.
-    const window = ' newer_than:24m';
-    const messages = new Map<string, EmailMessage>();
-    try {
-      for (const q of HOTEL_EMAIL_QUERIES) {
-        let found = await source.fetchMessages({ query: q.primary + window, maxResults: 300 });
-        if (found.length === 0 && q.fallback) {
-          found = await source.fetchMessages({ query: q.fallback + window, maxResults: 300 });
-        }
-        log.info('Fetched hotel emails', { source: q.provider, count: found.length });
-        for (const message of found) messages.set(message.id, message);
-      }
-    } catch (err) {
-      await this.clearGmailIfAuthExpired(err);
-      throw err;
-    }
-
+    const messages = await this.fetchReservationEmails(source, HOTEL_EMAIL_QUERIES, 'hotel');
     const folded = foldHotelEmails([...messages.values()]);
     const now = new Date().toISOString();
     let added = 0;
@@ -826,6 +818,84 @@ export class AppService {
     }
 
     log.info('Hotel import complete', { scanned: messages.size, added, updated, cancelled });
+    this.deps.onEmailProgress?.({ phase: 'done', scanned: messages.size, total: messages.size });
+    return { scanned: messages.size, added, updated, cancelled };
+  }
+
+  /**
+   * Search Gmail with each sender query (falling back to the domain-wide query
+   * when the exact sender finds nothing), looking back 24 months because
+   * reservations are made well ahead of the trip.
+   */
+  private async fetchReservationEmails(
+    source: GmailMessageSource,
+    queries: { provider: string; primary: string; fallback?: string }[],
+    kind: string,
+  ): Promise<Map<string, EmailMessage>> {
+    const window = ' newer_than:24m';
+    const messages = new Map<string, EmailMessage>();
+    try {
+      for (const q of queries) {
+        let found = await source.fetchMessages({ query: q.primary + window, maxResults: 300 });
+        if (found.length === 0 && q.fallback) {
+          found = await source.fetchMessages({ query: q.fallback + window, maxResults: 300 });
+        }
+        log.info(`Fetched ${kind} emails`, { source: q.provider, count: found.length });
+        for (const message of found) messages.set(message.id, message);
+      }
+    } catch (err) {
+      await this.clearGmailIfAuthExpired(err);
+      throw err;
+    }
+    return messages;
+  }
+
+  // --- Rental cars ---------------------------------------------------------
+
+  listRentalCars(): Promise<RentalCar[]> {
+    return this.deps.rentalCars.list();
+  }
+
+  /**
+   * Import Hertz and National reservations from Gmail, folded to the latest
+   * state per confirmation number and reconciled with storage (new added,
+   * re-sent confirmations refreshed, cancelled reservations removed).
+   */
+  async importRentalCars(): Promise<RentalImportResult> {
+    const source = await this.buildEmailSource(true);
+    if (!source || !(await source.isConnected())) {
+      throw new Error('Gmail is not connected. Connect your account in Settings first.');
+    }
+
+    const messages = await this.fetchReservationEmails(source, RENTAL_EMAIL_QUERIES, 'rental car');
+    const folded = foldRentalEmails([...messages.values()]);
+    const now = new Date().toISOString();
+    let added = 0;
+    let updated = 0;
+    let cancelled = 0;
+
+    const stored = await this.deps.rentalCars.list();
+    for (const cancellation of folded.cancellations) {
+      for (const car of stored) {
+        if (rentalCancellationMatches(cancellation, car) && !folded.cars.some((c) => rentalCarKey(c) === rentalCarKey(car))) {
+          await this.deps.rentalCars.delete(car.id);
+          cancelled += 1;
+        }
+      }
+    }
+
+    for (const parsed of folded.cars) {
+      const prior = await this.deps.rentalCars.getByKey(rentalCarKey(parsed));
+      if (prior) {
+        await this.deps.rentalCars.update({ ...parsed, id: prior.id, createdAt: prior.createdAt, updatedAt: now });
+        updated += 1;
+      } else {
+        await this.deps.rentalCars.create({ ...parsed, id: generateId('car'), createdAt: now, updatedAt: now });
+        added += 1;
+      }
+    }
+
+    log.info('Rental car import complete', { scanned: messages.size, added, updated, cancelled });
     this.deps.onEmailProgress?.({ phase: 'done', scanned: messages.size, total: messages.size });
     return { scanned: messages.size, added, updated, cancelled };
   }

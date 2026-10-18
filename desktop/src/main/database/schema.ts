@@ -151,6 +151,31 @@ CREATE TABLE IF NOT EXISTS hotel_stays (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hotel_stays_key ON hotel_stays(stay_key);
 CREATE INDEX IF NOT EXISTS idx_hotel_stays_check_in ON hotel_stays(check_in);
+
+-- Imported car rental reservations (Hertz, National). rental_key is the
+-- provider + confirmation number used to de-duplicate re-imports.
+CREATE TABLE IF NOT EXISTS rental_cars (
+  id TEXT PRIMARY KEY,
+  rental_key TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  confirmation_number TEXT NOT NULL,
+  pickup_location TEXT NOT NULL,
+  pickup_address TEXT,
+  pickup_phone TEXT,
+  pickup_at TEXT NOT NULL,
+  return_location TEXT NOT NULL,
+  return_at TEXT NOT NULL,
+  vehicle_class TEXT,
+  vehicle_model TEXT,
+  driver_name TEXT,
+  email_id TEXT,
+  booked_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rental_cars_key ON rental_cars(rental_key);
+CREATE INDEX IF NOT EXISTS idx_rental_cars_pickup ON rental_cars(pickup_at);
 CREATE INDEX IF NOT EXISTS idx_flights_passenger ON flights(passenger_id);
 CREATE INDEX IF NOT EXISTS idx_flights_account ON flights(account_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_flight ON price_history(flight_id, recorded_at);

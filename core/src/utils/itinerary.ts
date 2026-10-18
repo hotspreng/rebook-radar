@@ -2,7 +2,8 @@ import { AIRLINE_LABELS, Airline, CABIN_LABELS, Cabin } from '../models/common.j
 import type { Airport, Flight, FlightSegment } from '../models/Flight.js';
 import { operatingAirline } from '../models/Flight.js';
 import { HOTEL_PROVIDER_LABELS, type HotelStay } from '../models/HotelStay.js';
-import { formatAirportCity, formatAirportName } from '../data/airports.js';
+import { RENTAL_PROVIDER_LABELS, type RentalCar } from '../models/RentalCar.js';
+import { formatAirportCity, formatAirportName, lookupAirport } from '../data/airports.js';
 
 /** One tracked flight plus the traveler it belongs to. */
 export interface ItineraryFlight {
@@ -11,12 +12,14 @@ export interface ItineraryFlight {
 }
 
 export interface ItineraryOptions {
-  /** Heading printed at the top. Defaults to "FLIGHT ITINERARY" / "HOTEL ITINERARY" / "TRAVEL ITINERARY". */
+  /** Title defaults: "FLIGHT ITINERARY" / "HOTEL ITINERARY" / "CAR RENTAL ITINERARY" / "TRAVEL ITINERARY". */
   title?: string;
   /** Include confirmation numbers. Defaults to true. */
   includeConfirmation?: boolean;
   /** Hotel stays to list alongside the flights, in date order. */
   hotels?: HotelStay[];
+  /** Car rentals to list alongside the flights and stays, in date order. */
+  rentals?: RentalCar[];
 }
 
 /** Full carrier names for correspondence ("United Airlines", not "United"). */
@@ -383,21 +386,55 @@ function describeStay(stay: HotelStay, includeConfirmation: boolean): JourneyVie
   };
 }
 
+function describeRental(car: RentalCar, includeConfirmation: boolean): JourneyView {
+  const pickup = parseStayMoment(car.pickupAt);
+  const details: Field[] = [{ label: 'Pick-up location', value: rentalLocationLabel(car.pickupLocation) }];
+  if (car.pickupAddress) details.push({ label: 'Address', value: car.pickupAddress });
+  if (car.pickupPhone) details.push({ label: 'Phone', value: car.pickupPhone });
+  details.push({ label: 'Pick-up', value: stayDateLabel(car.pickupAt, 'at') });
+  details.push({
+    label: 'Return location',
+    value: car.returnLocation === car.pickupLocation ? 'Same as pick-up' : rentalLocationLabel(car.returnLocation),
+  });
+  details.push({ label: 'Return', value: stayDateLabel(car.returnAt, 'by') });
+  const vehicle = [car.vehicleClass, car.vehicleModel].filter(Boolean).join(' – ');
+  if (vehicle) details.push({ label: 'Vehicle', value: vehicle });
+
+  const extras: Field[] = [];
+  if (car.driverName) extras.push({ label: 'Driver', value: car.driverName });
+
+  return {
+    heading: 'CAR RENTAL',
+    date: pickup ? formatDay(pickup.day) : undefined,
+    carrier: RENTAL_PROVIDER_LABELS[car.provider],
+    details,
+    segments: [],
+    extras,
+    confirmations: includeConfirmation ? [{ label: 'Confirmation', value: car.confirmationNumber }] : [],
+  };
+}
+
+/** "ROCHESTER INTL ARPT (ROC)" → the spelled-out airport when the code is in the lookup table. */
+function rentalLocationLabel(location: string): string {
+  const code = location.match(/\(([A-Z]{3})\)\s*$/)?.[1];
+  return code && lookupAirport(code) ? formatAirportName(code) : location;
+}
+
 function buildView(inputs: ItineraryFlight[], options: ItineraryOptions): ItineraryView | undefined {
   const journeys = groupJourneys(inputs);
   const stays = options.hotels ?? [];
-  if (journeys.length === 0 && stays.length === 0) return undefined;
+  const cars = options.rentals ?? [];
+  if (journeys.length === 0 && stays.length === 0 && cars.length === 0) return undefined;
 
   const includeConfirmation = options.includeConfirmation ?? true;
   const travelers: string[] = [];
   for (const journey of journeys) {
     for (const name of journey.passengers) if (!travelers.includes(name)) travelers.push(name);
   }
-  // A hotel-only itinerary has no flight passengers, so name the guests instead.
+  // Without flights there are no passengers, so name the hotel guests and drivers instead.
   if (journeys.length === 0) {
-    for (const stay of stays) {
-      for (const name of stay.guestNames) if (!travelers.includes(name)) travelers.push(name);
-    }
+    const names = [...stays.flatMap((s) => s.guestNames), ...cars.map((c) => c.driverName ?? '')];
+    for (const name of names) if (name && !travelers.includes(name)) travelers.push(name);
   }
 
   const sections: { sortKey: string; view: JourneyView }[] = [
@@ -410,9 +447,16 @@ function buildView(inputs: ItineraryFlight[], options: ItineraryOptions): Itiner
       sortKey: stay.checkIn.length > 10 ? stay.checkIn.slice(0, 16) : `${stay.checkIn}T15:00`,
       view: describeStay(stay, includeConfirmation),
     })),
+    ...cars.map((car) => ({
+      sortKey: car.pickupAt.length > 10 ? car.pickupAt.slice(0, 16) : `${car.pickupAt}T12:00`,
+      view: describeRental(car, includeConfirmation),
+    })),
   ].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-  const kind = journeys.length > 0 ? (stays.length > 0 ? 'Travel' : 'Flight') : 'Hotel';
+  const kind =
+    journeys.length > 0
+      ? stays.length + cars.length > 0 ? 'Travel' : 'Flight'
+      : stays.length > 0 ? (cars.length > 0 ? 'Travel' : 'Hotel') : 'Car Rental';
   return {
     title: options.title ?? `${kind.toUpperCase()} ITINERARY`,
     htmlTitle: options.title ?? `${kind} Itinerary`,

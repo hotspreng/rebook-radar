@@ -1,5 +1,6 @@
 import type { HotelProvider, ParsedHotelStay } from '../models/HotelStay.js';
 import type { EmailMessage } from './EmailMessage.js';
+import { isoDate, isPhone, labelValue, monthNumber, stamp, to24h, toLines } from './emailParsingUtils.js';
 import { unwrapForwarded } from './forwardedEmail.js';
 
 /**
@@ -83,46 +84,11 @@ export const HOTEL_EMAIL_QUERIES: { provider: HotelProvider | 'forwarded'; prima
 
 // --- text helpers -----------------------------------------------------------
 
-const MONTH_INDEX: Record<string, number> = {
-  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
-};
-
-function monthNumber(token: string): number | undefined {
-  return MONTH_INDEX[token.slice(0, 3).toLowerCase()];
-}
-
-const pad2 = (n: number): string => String(n).padStart(2, '0');
-
-function isoDate(year: number, month: number, day: number): string {
-  return `${year}-${pad2(month)}-${pad2(day)}`;
-}
-
-/** "3:00 PM" → "15:00" */
-function to24h(text: string): string | undefined {
-  const m = text.match(/(\d{1,2}):(\d{2})\s*([AaPp])/);
-  if (!m) return undefined;
-  let hour = Number(m[1]) % 12;
-  if (m[3]!.toLowerCase() === 'p') hour += 12;
-  return `${pad2(hour)}:${m[2]}`;
-}
-
-function stamp(date: string, time?: string): string {
-  return time ? `${date}T${time}:00` : date;
-}
-
 function nightsBetween(checkIn: string, checkOut: string): number | undefined {
   const a = Date.parse(`${checkIn.slice(0, 10)}T00:00:00Z`);
   const b = Date.parse(`${checkOut.slice(0, 10)}T00:00:00Z`);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return undefined;
   return Math.round((b - a) / 86_400_000);
-}
-
-function toLines(body: string): string[] {
-  return body
-    .replace(/[\u200b-\u200d\u2060\ufeff\u00ad]/g, '')
-    .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, ' ').trim())
-    .filter((l) => l.length > 0);
 }
 
 /** ALL-CAPS text (a common template habit for names) → "Title Case". Mixed case is left alone. */
@@ -144,25 +110,8 @@ function tidyRoomType(value: string): string {
   return out;
 }
 
-const PHONE_LINE = /^\+?\(?\d[\d\s().-]{6,}$/;
-const isPhone = (line: string): boolean => PHONE_LINE.test(line);
-
 function dedupeConsecutive(lines: string[]): string[] {
   return lines.filter((line, i) => i === 0 || line !== lines[i - 1]);
-}
-
-/** Value of a "Label: value" pair, where the value may sit on the next line. */
-function labelValue(lines: string[], label: RegExp, from = 0): string | undefined {
-  const re = new RegExp(`^(?:${label.source})\\s*:?\\s*(.*)$`, 'i');
-  for (let i = from; i < lines.length; i += 1) {
-    const m = re.exec(lines[i]!);
-    if (!m) continue;
-    const inline = m[1]!.trim();
-    if (inline) return inline;
-    const next = lines[i + 1];
-    if (next) return next;
-  }
-  return undefined;
 }
 
 /** "Check-in" / "Check-out" followed by a weekday-optional date and optional time. */

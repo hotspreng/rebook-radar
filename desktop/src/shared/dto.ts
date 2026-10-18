@@ -107,6 +107,9 @@ export interface HotelImportResult {
   cancelled: number;
 }
 
+/** Outcome of importing car rental reservations from Gmail. */
+export type RentalImportResult = HotelImportResult;
+
 /** Live progress emitted while an email import is running. */
 export interface EmailImportProgress {
   /** Current stage of the import. */

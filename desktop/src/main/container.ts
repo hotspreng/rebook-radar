@@ -19,6 +19,7 @@ import { SqlitePriceHistoryRepository } from './database/repositories/SqlitePric
 import { SqliteRebookEventRepository } from './database/repositories/SqliteRebookEventRepository.js';
 import { SqliteCreditReviewRepository } from './database/repositories/SqliteCreditReviewRepository.js';
 import { SqliteHotelStayRepository } from './database/repositories/SqliteHotelStayRepository.js';
+import { SqliteRentalCarRepository } from './database/repositories/SqliteRentalCarRepository.js';
 import { SafeStorageSecretStore } from './security/SafeStorageSecretStore.js';
 import { AppService } from './services/AppService.js';
 import { SettingsStore } from './services/SettingsStore.js';
@@ -59,6 +60,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
   const rebookEvents = new SqliteRebookEventRepository();
   const creditReviews = new SqliteCreditReviewRepository();
   const hotelStays = new SqliteHotelStayRepository();
+  const rentalCars = new SqliteRentalCarRepository();
   const secrets = new SafeStorageSecretStore();
   const notifier = new Notifier();
 
@@ -77,6 +79,7 @@ export function buildContainer(config: AppConfig, emit: ContainerEmitters): AppC
     rebookEvents,
     creditReviews,
     hotelStays,
+    rentalCars,
     secrets,
     debugDir,
     openExternal: (url: string) => shell.openExternal(url),

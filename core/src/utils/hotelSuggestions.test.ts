@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import { Airline, FareType, FlightSource, PurchaseType } from '../models/common.js';
 import type { Flight } from '../models/Flight.js';
 import type { HotelStay } from '../models/HotelStay.js';
-import { suggestHotelStays } from './hotelSuggestions.js';
+import type { RentalCar } from '../models/RentalCar.js';
+import { suggestHotelStays, suggestRentalCars } from './hotelSuggestions.js';
 
 function flight(departs: string, arrives: string): Flight {
   return {
@@ -74,4 +75,41 @@ test('suggestions come back in check-in order', () => {
 
 test('no flights means no suggestions', () => {
   assert.deepEqual(suggestHotelStays([], [stay('x', '2026-06-08', '2026-06-09')]), []);
+});
+
+function rental(id: string, pickupAt: string, returnAt: string): RentalCar {
+  return {
+    id,
+    provider: 'hertz',
+    confirmationNumber: id.toUpperCase().padEnd(8, 'X'),
+    pickupLocation: 'DENVER (DEN)',
+    pickupAt,
+    returnLocation: 'DENVER (DEN)',
+    returnAt,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+  };
+}
+
+test('rentals during the trip are suggested, in pick-up order', () => {
+  const cars = [
+    rental('late', '2026-06-09T09:00:00', '2026-06-11T10:00:00'),
+    rental('arrive', '2026-06-08T07:00:00', '2026-06-11T10:00:00'),
+  ];
+  assert.deepEqual(suggestRentalCars([outbound, ret], cars).map((c) => c.id), ['arrive', 'late']);
+});
+
+test('rentals outside the trip, or returned the day you fly out, are not suggested', () => {
+  const cars = [
+    rental('before', '2026-05-01T09:00:00', '2026-05-05T09:00:00'),
+    rental('after', '2026-07-01T09:00:00', '2026-07-05T09:00:00'),
+    rental('earlier-trip', '2026-06-05T09:00:00', '2026-06-07T09:00:00'),
+  ];
+  assert.deepEqual(suggestRentalCars([outbound, ret], cars), []);
+});
+
+test('a rental that spans the outbound departure is suggested; no flights means none', () => {
+  const spanning = rental('span', '2026-06-06T09:00:00', '2026-06-09T09:00:00');
+  assert.equal(suggestRentalCars([outbound], [spanning]).length, 1);
+  assert.deepEqual(suggestRentalCars([], [spanning]), []);
 });

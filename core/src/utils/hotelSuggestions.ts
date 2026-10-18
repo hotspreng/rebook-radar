@@ -1,5 +1,6 @@
 import type { Flight } from '../models/Flight.js';
 import type { HotelStay } from '../models/HotelStay.js';
+import type { RentalCar } from '../models/RentalCar.js';
 
 /**
  * Hotel stays that fall within the trip the given flights make up.
@@ -23,4 +24,28 @@ export function suggestHotelStays(flights: Flight[], stays: HotelStay[]): HotelS
   return stays
     .filter((stay) => stay.checkIn.slice(0, 10) <= end && stay.checkOut.slice(0, 10) > start)
     .sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+}
+
+/**
+ * Car rentals that fall within the same trip window. A rental matches when it
+ * is picked up on or before the last arrival day and is either picked up on or
+ * after the first departure day or returned after it (so a rental returned the
+ * day you fly out, from an earlier trip, is not suggested). Results are in
+ * pick-up order.
+ */
+export function suggestRentalCars(flights: Flight[], cars: RentalCar[]): RentalCar[] {
+  const dates = flights.flatMap((f) =>
+    [f.departureDateTime, f.arrivalDateTime].flatMap((value) => (value ? [value.slice(0, 10)] : [])),
+  );
+  if (dates.length === 0) return [];
+
+  const start = dates.reduce((a, b) => (a < b ? a : b));
+  const end = dates.reduce((a, b) => (a > b ? a : b));
+
+  return cars
+    .filter((car) => {
+      const pickup = car.pickupAt.slice(0, 10);
+      return pickup <= end && (pickup >= start || car.returnAt.slice(0, 10) > start);
+    })
+    .sort((a, b) => a.pickupAt.localeCompare(b.pickupAt));
 }

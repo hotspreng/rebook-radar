@@ -63,6 +63,10 @@ export const IPC = {
   hotelList: 'hotel:list',
   hotelImport: 'hotel:import',
 
+  // Rental cars
+  rentalList: 'rental:list',
+  rentalImport: 'rental:import',
+
   // System
   openExternal: 'system:openExternal',
 

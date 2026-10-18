@@ -4,6 +4,7 @@ import { Dashboard } from './components/Dashboard.js';
 import { PastFlightsPage } from './components/PastFlightsPage.js';
 import { ItineraryPage } from './components/ItineraryPage.js';
 import { HotelStaysPage } from './components/HotelStaysPage.js';
+import { RentalCarsPage } from './components/RentalCarsPage.js';
 import { ReportingPage } from './components/ReportingPage.js';
 import { TrendsPage } from './components/TrendsPage.js';
 import { ReviewQueuePage } from './components/ReviewQueuePage.js';
@@ -41,6 +42,7 @@ export default function App(): JSX.Element {
           <>
             {route === 'dashboard' && <Dashboard />}
             {route === 'hotels' && <HotelStaysPage />}
+            {route === 'rentals' && <RentalCarsPage />}
             {route === 'itinerary' && <ItineraryPage />}
             {route === 'past' && <PastFlightsPage />}
             {route === 'reporting' && <ReportingPage />}

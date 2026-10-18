@@ -110,6 +110,10 @@ export function registerIpcHandlers(container: AppContainer, getWindow: () => Br
   // Hotel stays
   handle(IPC.hotelList, () => service.listHotelStays());
   handle(IPC.hotelImport, () => service.importHotelStays());
+
+  // Rental cars
+  handle(IPC.rentalList, () => service.listRentalCars());
+  handle(IPC.rentalImport, () => service.importRentalCars());
   // System
   handle<string>(IPC.openExternal, (url) => shell.openExternal(url));
 

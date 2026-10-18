@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { Airline, Cabin, FareType, FlightSource, PurchaseType } from '../models/common.js';
 import type { Flight } from '../models/Flight.js';
 import type { HotelStay } from '../models/HotelStay.js';
+import type { RentalCar } from '../models/RentalCar.js';
 import { buildItinerary, buildItineraryHtml } from './itinerary.js';
 
 function makeFlight(overrides: Partial<Flight> = {}): Flight {
@@ -418,4 +419,85 @@ test('the formatted version of a stay carries the same content and escapes marku
   assert.doesNotMatch(html, /<b>/);
   assert.match(html, /2AB345CDEF/);
   assert.match(html, /Wednesday, January 6, 2027, from 3:00 PM/);
+});
+
+// --- car rentals ------------------------------------------------------------
+
+const NATIONAL_CAR: RentalCar = {
+  id: 'c1',
+  provider: 'national',
+  confirmationNumber: '123456789',
+  pickupLocation: 'SPRINGFIELD INTL ARPT (SPI)',
+  pickupAddress: '100 MAIN ST- SPRING. AIRPORT, SPRINGFIELD IL 62707-0059',
+  pickupPhone: '(555) 123-4567',
+  pickupAt: '2027-01-07T18:30:00',
+  returnLocation: 'SPRINGFIELD INTL ARPT (SPI)',
+  returnAt: '2027-01-14T08:00:00',
+  vehicleClass: 'Full Size',
+  vehicleModel: 'Ford Fusion or similar',
+  driverName: 'JANE TRAVELER',
+  createdAt: '2026-10-17T00:00:00Z',
+  updatedAt: '2026-10-17T00:00:00Z',
+};
+
+const HERTZ_CAR: RentalCar = {
+  ...NATIONAL_CAR,
+  id: 'c2',
+  provider: 'hertz',
+  confirmationNumber: 'A123B4C56D7',
+  pickupLocation: 'DENVER - DENVER INTERNATIONAL AIRPORT (DEN)',
+  pickupAddress: undefined,
+  pickupPhone: undefined,
+  returnLocation: 'Downtown Depot',
+  vehicleClass: 'Large Sedan',
+  vehicleModel: 'Nissan Altima',
+  driverName: undefined,
+};
+
+test('a car rental sits in date order between the flights, with the airport spelled out', () => {
+  const text = buildItinerary([outbound('Joshua Sprenger', 'a'), ret('Joshua Sprenger', 'b')], {
+    rentals: [{ ...HERTZ_CAR, pickupAt: '2027-01-07T18:30:00' }],
+  });
+  assert.match(text, /^TRAVEL ITINERARY$/m);
+  assert.ok(text.indexOf('OUTBOUND JOURNEY') < text.indexOf('CAR RENTAL'));
+  assert.ok(text.indexOf('CAR RENTAL') < text.indexOf('RETURN JOURNEY'));
+  assert.match(text, /^Pick-up location: Denver, CO – Denver International Airport \(DEN\)$/m);
+  assert.match(text, /^Return location: Downtown Depot$/m);
+});
+
+test('a car rental lists company, locations, times, vehicle, driver and confirmation', () => {
+  const text = buildItinerary([], { rentals: [NATIONAL_CAR] });
+  assert.match(text, /^CAR RENTAL ITINERARY$/m);
+  assert.match(text, /^Travelers: JANE TRAVELER$/m);
+  assert.match(text, /^CAR RENTAL$/m);
+  assert.match(text, /^National Car Rental$/m);
+  assert.match(text, /^Address: 100 MAIN ST- SPRING\. AIRPORT, SPRINGFIELD IL 62707-0059$/m);
+  assert.match(text, /^Phone: \(555\) 123-4567$/m);
+  assert.match(text, /^Pick-up: Thursday, January 7, 2027, at 6:30 PM$/m);
+  assert.match(text, /^Return location: Same as pick-up$/m);
+  assert.match(text, /^Return: Thursday, January 14, 2027, by 8:00 AM$/m);
+  assert.match(text, /^Vehicle: Full Size – Ford Fusion or similar$/m);
+  assert.match(text, /^Driver: JANE TRAVELER$/m);
+  assert.match(text, /^Confirmation: 123456789$/m);
+});
+
+test('hotels and rentals together make a travel itinerary; rental confirmations honor the toggle', () => {
+  const both = buildItinerary([outbound('Joshua Sprenger', 'a')], {
+    hotels: [MARRIOTT_STAY],
+    rentals: [NATIONAL_CAR],
+    includeConfirmation: false,
+  });
+  assert.match(both, /^TRAVEL ITINERARY$/m);
+  assert.match(both, /HOTEL STAY/);
+  assert.match(both, /CAR RENTAL/);
+  assert.doesNotMatch(both, /123456789|2AB345CDEF/);
+  assert.match(buildItinerary([], { hotels: [MARRIOTT_STAY], rentals: [NATIONAL_CAR] }), /^TRAVEL ITINERARY$/m);
+});
+
+test('the formatted version of a rental carries the same content and escapes markup', () => {
+  const html = buildItineraryHtml([], { rentals: [{ ...NATIONAL_CAR, vehicleModel: 'Car <i>X</i>' }] });
+  assert.match(html, /CAR RENTAL/);
+  assert.match(html, /123456789/);
+  assert.match(html, /Car &lt;i&gt;X&lt;\/i&gt;/);
+  assert.doesNotMatch(html, /<i>/);
 });

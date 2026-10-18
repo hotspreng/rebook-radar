@@ -6,6 +6,7 @@ import type {
   NewFlight,
   NewPassenger,
   Passenger,
+  RentalCar,
 } from '@swr/core';
 import type {
   AlertEvent,
@@ -23,6 +24,7 @@ import type {
   PastFlightView,
   PriceTrends,
   PriceUpdateEvent,
+  RentalImportResult,
   SavingsReport,
   SerpApiKeyUsage,
   SetPasswordInput,
@@ -101,6 +103,10 @@ export interface SwrApi {
   hotels: {
     list(): Promise<HotelStay[]>;
     import(): Promise<HotelImportResult>;
+  };
+  rentals: {
+    list(): Promise<RentalCar[]>;
+    import(): Promise<RentalImportResult>;
   };
   exportCsv(): Promise<{ saved: boolean; path?: string }>;
   openExternal(url: string): Promise<void>;
