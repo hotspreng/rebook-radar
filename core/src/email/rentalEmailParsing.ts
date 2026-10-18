@@ -213,9 +213,11 @@ function hertzDateReader(notBefore: () => string): (line: string) => { date: str
   };
 }
 
-/** Hertz's number follows "Your confirmation is:"; other wordings (cancellations) are matched loosely. */
+/** Hertz's number follows "Your confirmation is:" (or "Cancellation:" on a cancellation); other wordings are matched loosely. */
 function hertzConfirmation(text: string): string | undefined {
-  const exact = plainConfirmation(text.match(/confirmation(?: number)? is:?\s*([A-Z0-9]+)/i)?.[1]);
+  const exact = plainConfirmation(
+    text.match(/confirmation(?: number)? is:?\s*([A-Z0-9]+)/i)?.[1] ?? text.match(/^cancell?ation(?: number)?:?\s*([A-Z0-9]+)/im)?.[1],
+  );
   if (exact) return exact;
   const loose = /(?:confirmation|reservation)\s*(?:number|#|no\.?)?\s*(?:is)?\s*:?\s*([A-Z0-9]{8,14})\b/gi;
   for (const m of text.matchAll(loose)) {

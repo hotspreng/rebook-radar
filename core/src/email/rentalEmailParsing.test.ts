@@ -236,3 +236,40 @@ test('folding: latest wins and a cancellation removes the reservation', () => {
   const revived = foldRentalEmails([NATIONAL_CANCEL, { ...NATIONAL, internalDate: NATIONAL_CANCEL.internalDate + 1000 }]);
   assert.equal(revived.cars.length, 1);
 });
+
+const HERTZ_CANCEL = msg({
+  id: 'hz2',
+  internalDate: Date.parse('2026-10-18T21:43:00Z'),
+  subject: 'Jane, Your reservation has been canceled!',
+  from: 'Hertz <reservations@emails.hertz.com>',
+  body: `
+Your reservation has been
+canceled, Jane!
+Cancellation: A123B4C56D7
+Jane Traveler
+#12345678
+CANCELED RESERVATION
+Pickup
+DENVER - DENVER
+INTERNATIONAL AIRPORT (DEN)
+Mar 02 | 12:00 pm
+Drop-off
+DENVER - DENVER
+INTERNATIONAL AIRPORT (DEN)
+Mar 06 | 12:00 pm
+Book a new reservation
+`,
+});
+
+test('parses a Hertz cancellation and removes the booking it names', () => {
+  const [event] = parseRentalEmail(HERTZ_CANCEL);
+  assert.equal(event!.type, 'cancelled');
+  assert.equal(event!.confirmationNumber, 'A123B4C56D7');
+  assert.equal(event!.car!.pickupAt, '2027-03-02T12:00:00');
+
+  assert.deepEqual(foldRentalEmails([HERTZ, HERTZ_CANCEL]).cars, []);
+  assert.equal(foldRentalEmails([HERTZ_CANCEL, HERTZ]).cars.length, 0, 'order of arrival, not of the list, decides');
+  assert.deepEqual(foldRentalEmails([HERTZ, HERTZ_CANCEL]).cancellations, [
+    { provider: 'hertz', confirmationNumber: 'A123B4C56D7' },
+  ]);
+});
