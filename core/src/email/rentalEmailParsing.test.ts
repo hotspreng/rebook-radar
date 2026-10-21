@@ -273,3 +273,12 @@ test('parses a Hertz cancellation and removes the booking it names', () => {
     { provider: 'hertz', confirmationNumber: 'A123B4C56D7' },
   ]);
 });
+test('opening hours glued onto the street are dropped, and "( DEN )" is tidied to "(DEN)"', () => {
+  const body = NATIONAL.body
+    .replace('SPRINGFIELD INTL ARPT (SPI)', 'SPRINGFIELD INTL ARPT ( SPI )')
+    .replace(/100 MAIN ST- SPRING\.\nAIRPORT\nSun[^\n]*\nMon-Fri[^\n]*\nSat[^\n]*\nHours subject to change\. Please call to verify\.\n/, '100 MAIN ST Sun-Sat 24 HOURS\n');
+  const car = parseRentalEmail(msg({ ...NATIONAL, body }))[0]!.car!;
+  assert.equal(car.pickupAddress, '100 MAIN ST, SPRINGFIELD IL 62707-0059');
+  assert.equal(car.pickupLocation, 'SPRINGFIELD INTL ARPT (SPI)');
+  assert.equal(car.returnLocation, 'SPRINGFIELD INTL ARPT (SPI)');
+});

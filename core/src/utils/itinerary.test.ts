@@ -594,3 +594,7 @@ test('a FlixBus ride lists the pick-up and drop-off addresses and labels the boo
   assert.match(text, /^Booking number: 3405939535$/m);
   assert.match(buildItineraryHtml([], { buses: [flix] }), /131 E Green St/);
 });
+test('a rental location written "( ROC )" still gets its airport spelled out', () => {
+  const text = buildItinerary([], { rentals: [{ ...NATIONAL_CAR, pickupLocation: 'ROCHESTER INTL ARPT ( ROC )', returnLocation: 'ROCHESTER INTL ARPT ( ROC )' }] });
+  assert.match(text, /^Pick-up location: Rochester, NY – .*\(ROC\)$/m);
+});

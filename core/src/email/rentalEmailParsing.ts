@@ -120,6 +120,11 @@ function nationalDate(line: string): { date: string } | undefined {
 
 const HOURS_LINE = new RegExp(`^${WEEKDAY}[a-z]*(?:-${WEEKDAY}[a-z]*)?\\s*\\d`, 'i');
 const TRAILING_HOURS = new RegExp(`\\s+${WEEKDAY}[a-z]*(?:-[A-Za-z]+)?\\s*\\d{1,2}:\\d{2}.*$`, 'i');
+/** Opening hours glued onto the street ("… RD Sun-Sat 8:30 AM-9:00 PM", "… Sun-Sat 24 HOURS"), wherever the line breaks fell. */
+const GLUED_HOURS = new RegExp(
+  `\\s+\\b${WEEKDAY}\\b(?:\\s*-\\s*${WEEKDAY}\\b)?\\s*(?:\\d{1,2}:\\d{2}|\\d{1,2}\\s*[AP]M|24\\s*HOURS?|closed).*$`,
+  'i',
+);
 const CITY_LINE = /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/;
 
 /** Street lines, then the "CITY ST ZIP" line, between the pick-up time and the phone number. */
@@ -139,8 +144,13 @@ function nationalAddress(lines: string[], from: number, until: number): { addres
     if (CITY_LINE.test(cleaned)) city = cleaned.replace(/\s+US$/, '');
     else street.push(cleaned);
   }
-  const address = [street.join(' '), city].filter(Boolean).join(', ');
+  const address = [street.join(' ').replace(GLUED_HOURS, '').trim(), city].filter(Boolean).join(', ');
   return { address: address || undefined, phone };
+}
+
+/** "EAGLE COUNTY REG ARPT ( EGE )" → "EAGLE COUNTY REG ARPT (EGE)". */
+function tidyLocation(location: string): string {
+  return location.replace(/\(\s*([A-Z]{3})\s*\)/, '($1)');
 }
 
 function nationalVehicle(lines: string[]): { vehicleClass?: string; vehicleModel?: string } {
@@ -180,11 +190,11 @@ function parseNational(
     car: {
       provider: 'national',
       confirmationNumber,
-      pickupLocation: pickup.location,
+      pickupLocation: tidyLocation(pickup.location),
       pickupAddress: address,
       pickupPhone: phone,
       pickupAt: stamp(pickup.date, pickup.time),
-      returnLocation: dropoff.location,
+      returnLocation: tidyLocation(dropoff.location),
       returnAt: stamp(dropoff.date, dropoff.time),
       ...nationalVehicle(lines),
       driverName: labelValue(lines, /driver name/),
@@ -262,9 +272,9 @@ function parseHertz(
     car: {
       provider: 'hertz',
       confirmationNumber,
-      pickupLocation: pickup.location,
+      pickupLocation: tidyLocation(pickup.location),
       pickupAt: stamp(pickup.date, pickup.time),
-      returnLocation: dropoff.location,
+      returnLocation: tidyLocation(dropoff.location),
       returnAt: stamp(dropoff.date, dropoff.time),
       vehicleClass,
       vehicleModel,

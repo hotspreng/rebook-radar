@@ -64,6 +64,7 @@ export function ItineraryPage(): JSX.Element {
   const pushToast = useAppStore((s) => s.pushToast);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [autoAdded, setAutoAdded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
   const [includeConfirmation, setIncludeConfirmation] = useState(true);
   // 'formatted' copies rich text (headings, colors, tables) that keeps its look
@@ -165,6 +166,13 @@ export function ItineraryPage(): JSX.Element {
   }, [entries, query]);
 
   function toggle(key: string): void {
+    // A hand-ticked (or hand-unticked) item is the user's own choice from here on.
+    setAutoAdded((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -191,35 +199,52 @@ export function ItineraryPage(): JSX.Element {
     return buses.filter((ride) => selected.has(busKey(ride)));
   }
 
-  // Stays, rentals and airport buses that fit the trip the ticked flights make up and aren't ticked yet.
-  const suggestions = useMemo<Suggestion[]>(() => {
+  // Stays, rentals and airport buses that fit the trip the ticked flights make up
+  // (ticked or not), as offers.
+  const matches = useMemo<Suggestion[]>(() => {
     const flightsPicked = rows.filter((row) => selected.has(row.key)).map((row) => row.items[0]!.flight);
-    const stays = suggestHotelStays(flightsPicked, hotels)
-      .filter((stay) => !selected.has(hotelKey(stay)))
-      .map<Suggestion>((stay) => ({
-        key: hotelKey(stay),
-        kind: 'hotel',
-        title: stay.hotelName,
-        when: `${formatStayMoment(stay.checkIn)} → ${formatStayMoment(stay.checkOut)}`,
-      }));
-    const rentals = suggestRentalCars(flightsPicked, cars)
-      .filter((car) => !selected.has(carKey(car)))
-      .map<Suggestion>((car) => ({
-        key: carKey(car),
-        kind: 'car',
-        title: `${RENTAL_PROVIDER_LABELS[car.provider]} · ${car.pickupLocation}`,
-        when: `${formatStayMoment(car.pickupAt)} → ${formatStayMoment(car.returnAt)}`,
-      }));
-    const transfers = suggestBusRides(flightsPicked, buses)
-      .filter((ride) => !selected.has(busKey(ride)))
-      .map<Suggestion>((ride) => ({
-        key: busKey(ride),
-        kind: 'bus',
-        title: `${ride.departureCity} → ${ride.arrivalCity}`,
-        when: `${formatStayMoment(ride.departureAt)}`,
-      }));
+    const stays = suggestHotelStays(flightsPicked, hotels).map<Suggestion>((stay) => ({
+      key: hotelKey(stay),
+      kind: 'hotel',
+      title: stay.hotelName,
+      when: `${formatStayMoment(stay.checkIn)} → ${formatStayMoment(stay.checkOut)}`,
+    }));
+    const rentals = suggestRentalCars(flightsPicked, cars).map<Suggestion>((car) => ({
+      key: carKey(car),
+      kind: 'car',
+      title: `${RENTAL_PROVIDER_LABELS[car.provider]} · ${car.pickupLocation}`,
+      when: `${formatStayMoment(car.pickupAt)} → ${formatStayMoment(car.returnAt)}`,
+    }));
+    const transfers = suggestBusRides(flightsPicked, buses).map<Suggestion>((ride) => ({
+      key: busKey(ride),
+      kind: 'bus',
+      title: `${ride.departureCity} → ${ride.arrivalCity}`,
+      when: `${formatStayMoment(ride.departureAt)}`,
+    }));
     return [...stays, ...rentals, ...transfers];
   }, [rows, hotels, cars, buses, selected]);
+
+  const suggestions = useMemo(() => matches.filter((s) => !selected.has(s.key)), [matches, selected]);
+
+  // Items added with Add / Add all belong to the flights they were offered for.
+  // When those flights are unticked or swapped, drop them again so they can't
+  // ride along into the next itinerary (e.g. last trip's rental).
+  const matchKeys = matches.map((s) => s.key).join('|');
+  useEffect(() => {
+    const fitting = new Set(matchKeys.split('|'));
+    const stale = [...autoAdded].filter((key) => !fitting.has(key));
+    if (stale.length === 0) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const key of stale) next.delete(key);
+      return next;
+    });
+    setAutoAdded((prev) => {
+      const next = new Set(prev);
+      for (const key of stale) next.delete(key);
+      return next;
+    });
+  }, [matchKeys, autoAdded]);
 
   const suggestionHeadline = ((): string => {
     const kinds = new Set(suggestions.map((s) => s.kind));
@@ -233,7 +258,9 @@ export function ItineraryPage(): JSX.Element {
   })();
 
   function addSuggested(items: Suggestion[]): void {
-    setSelected((prev) => new Set([...prev, ...items.map((s) => s.key)]));
+    const keys = items.map((s) => s.key);
+    setSelected((prev) => new Set([...prev, ...keys]));
+    setAutoAdded((prev) => new Set([...prev, ...keys]));
   }
 
   /** Build both versions from the same selection so they can never disagree. */
@@ -263,6 +290,7 @@ export function ItineraryPage(): JSX.Element {
 
   function handleClear(): void {
     setSelected(new Set());
+    setAutoAdded(new Set());
     setText('');
     setHtml('');
     setGenerated(false);

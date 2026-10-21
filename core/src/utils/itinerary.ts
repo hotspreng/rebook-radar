@@ -419,7 +419,7 @@ function describeRental(car: RentalCar, includeConfirmation: boolean): JourneyVi
 
 /** "ROCHESTER INTL ARPT (ROC)" → the spelled-out airport when the code is in the lookup table. */
 function rentalLocationLabel(location: string): string {
-  const code = location.match(/\(([A-Z]{3})\)\s*$/)?.[1];
+  const code = location.match(/\(\s*([A-Z]{3})\s*\)\s*$/)?.[1];
   return code && lookupAirport(code) ? formatAirportName(code) : location;
 }
 
