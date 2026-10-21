@@ -6,6 +6,7 @@ import {
   PurchaseType,
   Recommendation,
 } from '../models/index.js';
+import { isCompanionPassFlight } from '../models/Flight.js';
 import { normalizeCentsPerPoint, pointsToUsd, usdToPoints } from './PointsValuation.js';
 
 export interface ComparisonOptions {
@@ -23,6 +24,13 @@ export interface ComparisonOptions {
    * redemption rate used to estimate the current points price.
    */
   baselineHoldingNative?: number;
+  /**
+   * Booking anchors (points paid and the cash fare at that booking) of OTHER
+   * travelers on this exact flight. Identical flights share one market price,
+   * so the current points estimate scales from whichever anchor's cash fare is
+   * closest to today's, and every traveler on the flight sees the same estimate.
+   */
+  sameFlightAnchors?: { points: number; cashUsd: number }[];
   /** Clock injection for testability. */
   now?: () => Date;
 }
@@ -61,6 +69,24 @@ export class PricingComparisonService {
     const original = flight.originalCost;
     const isPoints = original.purchaseType === PurchaseType.Points;
 
+    // A Companion Pass ticket (taxes only) has no fare to measure against.
+    if (isCompanionPassFlight(flight)) {
+      return {
+        flightId: flight.id,
+        originalPurchaseType: original.purchaseType,
+        originalValueUsd: 0,
+        currentValueUsd: 0,
+        originalAmount: original.cashUsd ?? 0,
+        savingsUsd: 0,
+        percentDifference: 0,
+        pointValueCents: round2(pointValueCents),
+        recommendation: Recommendation.Unknown,
+        rationale:
+          'Assumed to be a Companion Pass ticket (only taxes were paid), so there is no fare to compare. Price and savings do not apply.',
+        notApplicable: true,
+        computedAt,
+      };
+    }
     // When a points flight's cash price was also known at booking (captured as
     // originalMarketCashUsd), that booking reveals THIS flight's real points
     // value: price ÷ points. Anchor every dollar figure on that flight-specific
@@ -107,13 +133,18 @@ export class PricingComparisonService {
       };
     }
 
-    // Resolve the current amount in the SAME unit as the original purchase,
-    // valued at the same flight-specific rate as the original.
+    // Resolve the current amount in the SAME unit as the original purchase.
+    // Points are scaled from the booking anchor closest to today's cash fare
+    // (this ticket's own, or another traveler's on the identical flight).
+    const ownAnchor =
+      isPoints && actualCash != null && actualCash > 0 && originalPoints > 0
+        ? { points: originalPoints, cashUsd: actualCash }
+        : undefined;
     const { currentAmount, currentValueUsd } = this.resolveCurrent(
-      flight,
       isPoints,
       quote,
       effectiveCpp,
+      nearestAnchor([...(ownAnchor ? [ownAnchor] : []), ...(options.sameFlightAnchors ?? [])], quote.cashUsd),
     );
 
     const savingsNative = round(originalAmount - currentAmount, isPoints ? 0 : 2);
@@ -149,17 +180,19 @@ export class PricingComparisonService {
   }
 
   private resolveCurrent(
-    flight: Flight,
     isPoints: boolean,
     quote: PriceQuote,
     pointValueCents: number,
+    anchor: Anchor | undefined,
   ): { currentAmount: number; currentValueUsd: number } {
     if (isPoints) {
-      const currentPoints = this.estimateCurrentPoints(flight, quote, pointValueCents);
+      const currentPoints = this.estimateCurrentPoints(quote, pointValueCents, anchor);
       const taxes = quote.pointsTaxesAndFeesUsd ?? 0;
+      // Value the points at the rate of the anchor they were scaled from.
+      const rate = anchor && quote.cashUsd != null ? (anchor.cashUsd * 100) / anchor.points : pointValueCents;
       return {
         currentAmount: currentPoints,
-        currentValueUsd: round2(pointsToUsd(currentPoints, pointValueCents) + taxes),
+        currentValueUsd: round2(pointsToUsd(currentPoints, rate) + taxes),
       };
     }
     const currentCash =
@@ -182,18 +215,17 @@ export class PricingComparisonService {
    * This keeps the current points estimate faithful to the fare the traveler
    * actually locked in (e.g. 8,500 pts / $161 ⇒ $211 now ≈ 11,140 pts).
    *
-   * Without a captured actual cash fare, fall back to a real points quote, then
-   * to converting the cash quote at the generic settings rate.
+   * When several travelers on the identical flight each captured an anchor, the
+   * one whose cash fare is closest to today's is used for all of them (points
+   * are not linear in cash, so the nearest data point is the best guide), which
+   * keeps the estimate the same for everyone on that flight.
+   *
+   * Without an anchor, fall back to a real points quote, then to converting the
+   * cash quote at the generic settings rate.
    */
-  private estimateCurrentPoints(
-    flight: Flight,
-    quote: PriceQuote,
-    pointValueCents: number,
-  ): number {
-    const originalPoints = flight.originalCost.points ?? 0;
-    const actualCash = flight.originalMarketCashUsd;
-    if (actualCash != null && actualCash > 0 && originalPoints > 0 && quote.cashUsd != null) {
-      return Math.round((originalPoints * quote.cashUsd) / actualCash);
+  private estimateCurrentPoints(quote: PriceQuote, pointValueCents: number, anchor: Anchor | undefined): number {
+    if (anchor && quote.cashUsd != null) {
+      return Math.round((anchor.points * quote.cashUsd) / anchor.cashUsd);
     }
     if (quote.points != null) return quote.points;
     if (quote.cashUsd != null) return usdToPoints(quote.cashUsd, pointValueCents);
@@ -236,6 +268,23 @@ export class PricingComparisonService {
 
     return 'The current price is the same or higher than what you paid. Keep your booking.';
   }
+}
+
+interface Anchor {
+  points: number;
+  cashUsd: number;
+}
+
+/** The anchor whose cash fare is closest to `cashUsd`; with no cash fare, the first (the ticket's own). */
+function nearestAnchor(anchors: Anchor[], cashUsd: number | undefined): Anchor | undefined {
+  const usable = anchors.filter((a) => a.points > 0 && a.cashUsd > 0);
+  if (usable.length === 0 || cashUsd == null) return usable[0];
+  return usable.reduce((best, a) => {
+    const d = Math.abs(a.cashUsd - cashUsd);
+    const bestD = Math.abs(best.cashUsd - cashUsd);
+    // On a tie prefer the higher (more recent, usually) fare so the choice is deterministic.
+    return d < bestD || (d === bestD && a.cashUsd > best.cashUsd) ? a : best;
+  });
 }
 
 function round(value: number, decimals: number): number {

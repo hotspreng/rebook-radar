@@ -24,6 +24,7 @@ import {
   generateId,
   hotelStayKey,
   isAirlineError,
+  isCompanionPassFlight,
   operatingAirline,
   rentalCancellationMatches,
   rentalCarKey,
@@ -1455,6 +1456,8 @@ export class AppService {
   async checkOne(flightId: string): Promise<FlightWithComparison> {
     const flight = await this.deps.flights.get(flightId);
     if (!flight) throw new Error(`Flight ${flightId} not found.`);
+    // Companion Pass tickets have no fare to compare, so don't spend a lookup on them.
+    if (isCompanionPassFlight(flight)) return this.toFlightWithComparison(flight);
     const provider = this.createProvider(flight.airline, this.fareSearchAirlineName(flight));
     const options = this.comparisonOptions(flight.airline);
     const result = await this.priceCheck.check(flight, provider, undefined, options);
@@ -1465,7 +1468,7 @@ export class AppService {
   }
 
   async checkAll(): Promise<FlightWithComparison[]> {
-    const flights = await this.deps.flights.listMonitored();
+    const flights = (await this.deps.flights.listMonitored()).filter((f) => !isCompanionPassFlight(f));
     const out: FlightWithComparison[] = [];
 
     const total = flights.length;
@@ -1956,8 +1959,36 @@ export class AppService {
     options: PriceCheckOptions,
   ): Promise<PriceComparison> {
     const { amount, adjusted } = await this.effectiveHolding(flight);
-    const opts = adjusted ? { ...options, baselineHoldingNative: amount } : options;
+    const sameFlightAnchors = await this.sameFlightAnchors(flight);
+    const opts = {
+      ...options,
+      ...(adjusted ? { baselineHoldingNative: amount } : {}),
+      ...(sameFlightAnchors.length > 0 ? { sameFlightAnchors } : {}),
+    };
     return this.pricing.compare(flight, quote, opts);
+  }
+
+  /**
+   * Booking anchors (points paid + the cash fare then) of the other travelers
+   * booked on this exact flight, so everyone on it shares one current estimate.
+   */
+  private async sameFlightAnchors(flight: Flight): Promise<{ points: number; cashUsd: number }[]> {
+    if (flight.originalCost.purchaseType !== PurchaseType.Points) return [];
+    const departs = flight.departureDateTime.slice(0, 16);
+    const all = await this.deps.flights.list();
+    return all
+      .filter(
+        (f) =>
+          f.id !== flight.id &&
+          f.airline === flight.airline &&
+          f.route.origin.code === flight.route.origin.code &&
+          f.route.destination.code === flight.route.destination.code &&
+          f.departureDateTime.slice(0, 16) === departs &&
+          f.originalCost.purchaseType === PurchaseType.Points &&
+          (f.originalCost.points ?? 0) > 0 &&
+          (f.originalMarketCashUsd ?? 0) > 0,
+      )
+      .map((f) => ({ points: f.originalCost.points!, cashUsd: f.originalMarketCashUsd! }));
   }
 
   private async toFlightWithComparison(

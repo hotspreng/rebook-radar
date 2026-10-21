@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  Airline,
   FareType,
   FlightSource,
   PurchaseType,
   Recommendation,
+  isCompanionPassFlight,
 } from '../models/index.js';
 import type { Flight, PriceQuote } from '../models/index.js';
 import { PricingComparisonService } from './PricingComparisonService.js';
@@ -258,4 +260,74 @@ test('price increase recommends Keep', () => {
 
   assert.equal(result.recommendation, Recommendation.Keep);
   assert.ok(result.savingsUsd < 0);
+});
+
+const opts = { pointValueCents: 1.4, savingsThresholdUsd: 25, savingsThresholdPoints: 2000, now: fixedNow };
+
+test('two travelers on the same flight get the same current points, scaled from the nearest booking anchor', () => {
+  const quote = makeQuote({ cashUsd: 241, pointsEstimated: true });
+  const early = makeFlight({
+    id: 'early',
+    originalCost: { purchaseType: PurchaseType.Points, points: 8000, taxesAndFeesUsd: 5.6 },
+    originalMarketCashUsd: 129,
+  });
+  const late = makeFlight({
+    id: 'late',
+    originalCost: { purchaseType: PurchaseType.Points, points: 9000, taxesAndFeesUsd: 5.6 },
+    originalMarketCashUsd: 192,
+  });
+  const anchorOf = (f: Flight) => ({ points: f.originalCost.points!, cashUsd: f.originalMarketCashUsd! });
+
+  const a = service.compare(early, quote, { ...opts, sameFlightAnchors: [anchorOf(late)] });
+  const b = service.compare(late, quote, { ...opts, sameFlightAnchors: [anchorOf(early)] });
+
+  // $192 is nearer to $241 than $129 is, so both scale from 9,000 pts / $192.
+  const expected = Math.round((9000 * 241) / 192);
+  assert.equal(a.currentAmount, expected);
+  assert.equal(b.currentAmount, expected);
+  // Savings now differ only by what each traveler actually paid (1,000 pts).
+  assert.equal(b.savingsNative! - a.savingsNative!, 1000);
+});
+
+test('a ticket with no anchor of its own borrows one from the identical flight', () => {
+  const flight = makeFlight({ originalCost: { purchaseType: PurchaseType.Points, points: 9000, taxesAndFeesUsd: 5.6 } });
+  const quote = makeQuote({ cashUsd: 241, pointsEstimated: true });
+  const result = service.compare(flight, quote, { ...opts, sameFlightAnchors: [{ points: 8000, cashUsd: 129 }] });
+  assert.equal(result.currentAmount, Math.round((8000 * 241) / 129));
+});
+
+test('a Southwest cash ticket under $20 is a Companion Pass ticket: price and savings do not apply', () => {
+  const flight = makeFlight({
+    airline: Airline.Southwest,
+    source: FlightSource.Email,
+    originalCost: { purchaseType: PurchaseType.Cash, cashUsd: 11.2, taxesAndFeesUsd: 11.2 },
+  });
+  assert.equal(isCompanionPassFlight(flight), true);
+  const result = service.compare(flight, makeQuote({ cashUsd: 150 }), opts);
+  assert.equal(result.notApplicable, true);
+  assert.equal(result.recommendation, Recommendation.Unknown);
+  assert.equal(result.savingsUsd, 0);
+  assert.equal(result.currentAmount, undefined);
+});
+
+test('companion detection: only Southwest cash tickets under $20 all-in', () => {
+  const cash = (cashUsd: number, extra: Partial<Flight> = {}): Flight =>
+    makeFlight({
+      airline: Airline.Southwest,
+      source: FlightSource.Email,
+      originalCost: { purchaseType: PurchaseType.Cash, cashUsd, taxesAndFeesUsd: 0 },
+      ...extra,
+    });
+  assert.equal(isCompanionPassFlight(cash(19.99)), true);
+  assert.equal(isCompanionPassFlight(cash(20)), false);
+  assert.equal(isCompanionPassFlight(cash(11.2, { airline: Airline.United })), false);
+  assert.equal(
+    isCompanionPassFlight(makeFlight({ airline: Airline.Southwest, originalCost: { purchaseType: PurchaseType.Points, points: 5000, taxesAndFeesUsd: 5.6 } })),
+    false,
+  );
+  // A manual entry keeps taxes apart: $12 fare + $11.20 taxes is not under $20.
+  assert.equal(
+    isCompanionPassFlight(makeFlight({ airline: Airline.Southwest, source: FlightSource.Manual, originalCost: { purchaseType: PurchaseType.Cash, cashUsd: 12, taxesAndFeesUsd: 11.2 } })),
+    false,
+  );
 });

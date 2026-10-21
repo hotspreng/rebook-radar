@@ -1,4 +1,4 @@
-import { AIRLINE_LABELS, Cabin, PurchaseType, Recommendation, operatingAirline } from '@swr/core';
+import { AIRLINE_LABELS, Cabin, PurchaseType, Recommendation, isCompanionPassFlight, operatingAirline } from '@swr/core';
 import type { PriceHistoryEntry } from '@swr/core';
 import type { FlightWithComparison } from '@shared/dto';
 import { ArrowRight, RefreshCw, Pencil, Trash2, TrendingDown, TrendingUp, X } from 'lucide-react';
@@ -159,7 +159,11 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
 
           <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
             <h3 className="mb-3 text-sm font-semibold text-slate-200">Price comparison</h3>
-            {comparison ? (
+            {comparison?.notApplicable ? (
+              <p className="rounded-lg bg-slate-800/50 p-3 text-xs leading-relaxed text-slate-300">
+                N/A — {comparison.rationale}
+              </p>
+            ) : comparison ? (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-slate-400">Recommendation</span>
@@ -271,7 +275,7 @@ export function FlightDetailDrawer({ item, onClose, onEdit, onDelete, onCheck, c
             <Button variant="secondary" onClick={onEdit}>
               <Pencil size={16} /> Edit
             </Button>
-            <Button onClick={onCheck} disabled={checking}>
+            <Button onClick={onCheck} disabled={checking || isCompanionPassFlight(flight)}>
               <RefreshCw size={16} className={checking ? 'animate-spin' : ''} /> Check price
             </Button>
           </div>

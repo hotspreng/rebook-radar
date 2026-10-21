@@ -6,6 +6,7 @@ import {
   FlightSource,
   IsoDate,
   IsoDateTime,
+  PurchaseType,
 } from './common.js';
 
 /** A single airport in a route. */
@@ -141,4 +142,23 @@ export function operatingAirline(flight: Flight): Airline {
   if (flight.airline !== Airline.AirCanada) return flight.airline;
   const prefix = flight.segments?.[0]?.flightNumber?.match(/^([A-Z0-9]{2})\b/i)?.[1]?.toUpperCase();
   return (prefix && FLIGHT_NUMBER_PREFIX_AIRLINE[prefix]) || flight.airline;
+}
+
+/** Southwest cash tickets below this all-in total are Companion Pass tickets (taxes only). */
+export const COMPANION_PASS_MAX_USD = 20;
+
+/**
+ * Whether a flight is assumed to be a Southwest Companion Pass ticket: a cash
+ * booking so cheap (under $20 all-in) that only taxes and fees were paid. Such
+ * tickets have no fare to compare against the market, so price, savings and
+ * rebooking don't apply to them.
+ */
+export function isCompanionPassFlight(flight: Flight): boolean {
+  if (flight.airline !== Airline.Southwest) return false;
+  if (flight.originalCost.purchaseType !== PurchaseType.Cash) return false;
+  const cash = flight.originalCost.cashUsd;
+  if (cash == null) return false;
+  // Manual entries keep the base fare and taxes separately; email imports store the grand total.
+  const total = cash + (flight.source === FlightSource.Manual ? flight.originalCost.taxesAndFeesUsd : 0);
+  return total < COMPANION_PASS_MAX_USD;
 }

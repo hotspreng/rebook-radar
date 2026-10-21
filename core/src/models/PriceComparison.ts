@@ -38,6 +38,9 @@ export interface PriceComparison {
    */
   rationale: string;
 
+  /** Whether price/savings don't apply (a Companion Pass ticket paid in taxes only). */
+  notApplicable?: boolean;
+
   /** When the comparison was computed. */
   computedAt: string;
 }

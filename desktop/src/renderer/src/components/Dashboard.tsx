@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { AIRLINE_LABELS, Airline, PurchaseType, Recommendation, operatingAirline } from '@swr/core';
+import { AIRLINE_LABELS, Airline, PurchaseType, Recommendation, isCompanionPassFlight, operatingAirline } from '@swr/core';
 import type { EmailImportProgress, Flight, FlightWithComparison, PriceCheckProgress, SavingsReport } from '@shared/dto';
 import {
   ArrowRight,
@@ -385,9 +385,11 @@ export function Dashboard(): JSX.Element {
                 // Negative savings means the current price is HIGHER than booked.
                 const currentMoreExpensive = savingsNegative;
                 const isPoints = type === PurchaseType.Points;
+                // Southwest cash tickets under $20 are assumed to be Companion Pass tickets (taxes only).
+                const isCompanion = isCompanionPassFlight(item.flight);
                 const currentAmount = c?.currentAmount;
                 // Cheaper same-day options priced below the matched/current one.
-                const cheaper = getCheaperAlternatives(item);
+                const cheaper = isCompanion ? [] : getCheaperAlternatives(item);
                 const isOpen = expanded.has(item.flight.id);
                 const canExpand = cheaper.length > 0;
                 // Round-trip grouping: show the booking's combined total once.
@@ -457,6 +459,12 @@ export function Dashboard(): JSX.Element {
                         })()}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-300">
+                        {isCompanion ? (
+                          <>
+                            <span className="text-slate-500">N/A</span>
+                            <span className="mt-0.5 block text-[11px] text-slate-500">Companion Pass · taxes only</span>
+                          </>
+                        ) : (
                         <>
                           {formatNative(
                             item.effectiveOriginalAmount ??
@@ -488,8 +496,12 @@ export function Dashboard(): JSX.Element {
                             )
                           )}
                         </>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-300">
+                        {isCompanion ? (
+                          <span className="text-slate-500">N/A</span>
+                        ) : (
                         <>
                           {currentAmount != null ? (
                             <span className={currentMoreExpensive ? 'text-rose-400' : undefined}>
@@ -526,17 +538,22 @@ export function Dashboard(): JSX.Element {
                             </div>
                           )}
                         </>
+                        )}
                       </td>
                       <td
                         className={`px-4 py-3 text-right ${
-                          savingsPositive
-                            ? 'text-emerald-400'
-                            : savingsNegative
-                              ? 'text-rose-400'
-                              : 'text-slate-400'
+                          isCompanion
+                            ? 'text-slate-500'
+                            : savingsPositive
+                              ? 'text-emerald-400'
+                              : savingsNegative
+                                ? 'text-rose-400'
+                                : 'text-slate-400'
                         }`}
                       >
-                        {c?.savingsNative != null ? (
+                        {isCompanion ? (
+                          'N/A'
+                        ) : c?.savingsNative != null ? (
                           <span className="inline-flex items-center gap-1">
                             {savingsPositive && <TrendingDown size={13} />}
                             {savingsNegative && <TrendingUp size={13} />}
@@ -580,10 +597,16 @@ export function Dashboard(): JSX.Element {
                         })()}
                       </td>
                       <td className="px-4 py-3">
-                        <RecommendationBadge value={c?.recommendation ?? Recommendation.Unknown} />
+                        {isCompanion ? (
+                          <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-xs font-medium text-slate-400">
+                            N/A
+                          </span>
+                        ) : (
+                          <RecommendationBadge value={c?.recommendation ?? Recommendation.Unknown} />
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {isRoundTrip && !isFirstLeg ? (
+                        {isCompanion ? null : isRoundTrip && !isFirstLeg ? (
                           <span className="text-[11px] text-slate-600">↳ synced</span>
                         ) : (
                           <button
