@@ -3,7 +3,7 @@ import type { Airport, Flight, FlightSegment } from '../models/Flight.js';
 import { operatingAirline } from '../models/Flight.js';
 import { HOTEL_PROVIDER_LABELS, type HotelStay } from '../models/HotelStay.js';
 import { RENTAL_PROVIDER_LABELS, type RentalCar } from '../models/RentalCar.js';
-import { BUS_PROVIDER_LABELS, busAirportDirection, type BusRide } from '../models/BusRide.js';
+import { BUS_PROVIDER_LABELS, BUS_REFERENCE_LABELS, busAirportDirection, type BusRide } from '../models/BusRide.js';
 import { formatAirportCity, formatAirportName, lookupAirport } from '../data/airports.js';
 
 /** One tracked flight plus the traveler it belongs to. */
@@ -432,9 +432,9 @@ function describeBus(ride: BusRide, includeConfirmation: boolean): JourneyView {
   const departs = parseLocal(ride.departureAt);
   const arrives = parseLocal(ride.arrivalAt);
   const details: Field[] = [
-    { label: 'From', value: busStopLabel(ride.departureCity, ride.departureStop) },
+    { label: 'Pick-up', value: busStopLabel(ride.departureCity, ride.departureStop) },
     ...(departs ? [{ label: 'Departs', value: formatTime(departs) }] : []),
-    { label: 'To', value: busStopLabel(ride.arrivalCity, ride.arrivalStop) },
+    { label: 'Drop-off', value: busStopLabel(ride.arrivalCity, ride.arrivalStop) },
     ...(arrives && departs ? [{ label: 'Arrives', value: formatEndpoint(arrives, departs) }] : []),
   ];
   if (ride.vehicle) details.push({ label: 'Vehicle', value: ride.vehicle });
@@ -453,7 +453,7 @@ function describeBus(ride: BusRide, includeConfirmation: boolean): JourneyView {
     details,
     segments: [],
     extras,
-    confirmations: includeConfirmation ? [{ label: 'Ticket reference', value: ride.ticketReference }] : [],
+    confirmations: includeConfirmation ? [{ label: BUS_REFERENCE_LABELS[ride.provider], value: ride.ticketReference }] : [],
   };
 }
 

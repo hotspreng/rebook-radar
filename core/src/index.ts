@@ -20,3 +20,4 @@ export { buildItinerary, buildItineraryHtml } from './utils/itinerary.js';
 export { suggestHotelStays, suggestRentalCars, suggestBusRides } from './utils/hotelSuggestions.js';
 export type { ItineraryFlight, ItineraryOptions } from './utils/itinerary.js';
 export { formatAirportCity, formatAirportName, lookupAirport } from './data/airports.js';
+export { BUS_STOPS, lookupBusStop } from './data/busStops.js';

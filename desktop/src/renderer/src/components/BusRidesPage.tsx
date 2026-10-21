@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BUS_PROVIDER_LABELS, busAirportDirection, type BusRide } from '@swr/core';
+import { BUS_PROVIDER_LABELS, BUS_REFERENCE_LABELS, busAirportDirection, type BusRide } from '@swr/core';
 import type { EmailImportProgress } from '@shared/dto';
 import { ArrowRight, Bus, Inbox, MapPin, Users } from 'lucide-react';
 import { Button, Card, CopyButton } from './ui.js';
@@ -59,7 +59,7 @@ export function BusRidesPage(): JSX.Element {
         <div>
           <h1 className="text-xl font-semibold text-slate-100">Bus rides</h1>
           <p className="text-sm text-slate-400">
-            Airport transfers imported from OurBus emails. Add them to an itinerary alongside your flights.
+            Bus rides imported from OurBus and FlixBus emails. Add them to an itinerary alongside your flights.
           </p>
         </div>
         <div className="relative">
@@ -84,7 +84,8 @@ export function BusRidesPage(): JSX.Element {
             </div>
             <p className="text-sm font-medium text-slate-300">No bus rides yet</p>
             <p className="mt-1 max-w-md text-sm text-slate-500">
-              Choose Import from Gmail to find ticket emails from mailadmin@ourbus.com, including ones a relative
+              Choose Import from Gmail to find ticket emails from mailadmin@ourbus.com and
+              noreply@booking.flixbus.com, including ones a relative
               forwarded to you.
             </p>
           </Card>
@@ -167,7 +168,7 @@ function RideCard({ ride }: { ride: BusRide }): JSX.Element {
           <>
             <dt className="text-slate-500"><MapPin size={14} aria-label="Boarding" /></dt>
             <dd className="text-slate-300">
-              <span className="text-slate-500">Board: </span>
+              <span className="text-slate-500">Pick-up: </span>
               {ride.departureStop}
             </dd>
           </>
@@ -197,9 +198,9 @@ function RideCard({ ride }: { ride: BusRide }): JSX.Element {
 
       <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-slate-800 pt-3 text-sm">
         <span className="flex items-center gap-1.5 text-slate-400">
-          Ticket reference
+          {BUS_REFERENCE_LABELS[ride.provider]}
           <span className="font-mono tracking-wide text-slate-200">{ride.ticketReference}</span>
-          <CopyButton value={ride.ticketReference} label="Ticket reference" />
+          <CopyButton value={ride.ticketReference} label={BUS_REFERENCE_LABELS[ride.provider]} />
         </span>
       </div>
     </Card>

@@ -172,3 +172,75 @@ test('unwraps a forwarded ticket', () => {
   });
   assert.equal(parseBusEmail(forwarded)[0]!.ride!.ticketReference, 'ABCD12');
 });
+
+const FLIX = msg({
+  id: 'fx1',
+  internalDate: Date.parse('2026-10-21T15:55:00Z'),
+  subject: 'Booking Confirmation #3405939535',
+  from: 'Flix <noreply@booking.flixbus.com>',
+  body: `
+Booking Confirmed!
+Booking Number: 3405939535
+View your ticket
+View Invoice
+Fri, Feb 12, 2027
+FlixBus
+Departure
+Station
+Ithaca
+Time
+02:15 PM
+Arrival
+Station
+Rochester Bus Stop
+Time
+04:25 PM
+Know what baggage you can bring to avoid surprises at the station.
+Real-time updates!
+`,
+});
+
+test('busProviderFor recognises FlixBus', () => {
+  assert.equal(busProviderFor('Flix <noreply@booking.flixbus.com>'), 'flixbus');
+});
+
+test('parses a FlixBus confirmation and fills in the known stop addresses', () => {
+  const [event] = parseBusEmail(FLIX);
+  assert.equal(event!.type, 'booked');
+  const ride = event!.ride!;
+  assert.equal(ride.provider, 'flixbus');
+  assert.equal(ride.ticketReference, '3405939535');
+  assert.equal(ride.departureAt, '2027-02-12T14:15:00');
+  assert.equal(ride.arrivalAt, '2027-02-12T16:25:00');
+  assert.equal(ride.departureCity, 'Ithaca, NY');
+  assert.match(ride.departureStop!, /^131 E Green St, Ithaca, NY 14850 \(curbside in front of Urban Outfitters/);
+  assert.equal(ride.arrivalCity, 'Rochester, NY');
+  assert.match(ride.arrivalStop!, /^120–124 Pleasant St, Rochester, NY 14604 \(on Pleasant Street near the RTS Transit Center/);
+  assert.equal(busAirportDirection(ride), undefined);
+});
+
+test('FlixBus: label order in the stripped text does not matter, and an unknown station keeps its name', () => {
+  const reordered = msg({
+    ...FLIX,
+    body: FLIX.body
+      .replace('Station\nIthaca\nTime\n02:15 PM', 'Time\n02:15 PM\nStation\nBuffalo Bus Stop')
+      .replace('Station\nRochester Bus Stop\nTime\n04:25 PM', 'Time\n04:25 PM\nStation\nRochester Bus Stop'),
+  });
+  const ride = parseBusEmail(reordered)[0]!.ride!;
+  assert.equal(ride.departureAt, '2027-02-12T14:15:00');
+  assert.equal(ride.departureCity, 'Buffalo');
+  assert.equal(ride.departureStop, undefined);
+  assert.equal(ride.arrivalAt, '2027-02-12T16:25:00');
+});
+
+test('a FlixBus cancellation removes the booking by its booking number', () => {
+  const cancel = msg({
+    id: 'fx2',
+    internalDate: FLIX.internalDate + 60_000,
+    subject: 'Booking Cancellation #3405939535',
+    from: FLIX.from,
+    body: 'Your booking has been cancelled.\nBooking Number: 3405939535',
+  });
+  assert.equal(parseBusEmail(cancel)[0]!.type, 'cancelled');
+  assert.deepEqual(foldBusEmails([FLIX, cancel]).rides, []);
+});

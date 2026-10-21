@@ -552,9 +552,9 @@ test('a bus ride lists stops, times, operator, passengers and ticket reference',
   assert.match(text, /^BUS ITINERARY$/m);
   assert.match(text, /^Travelers: Jane Traveler, John Traveler$/m);
   assert.match(text, /^OurBus$/m);
-  assert.match(text, /^From: Ithaca, NY – Campus Road behind Example Hall$/m);
+  assert.match(text, /^Pick-up: Ithaca, NY – Campus Road behind Example Hall$/m);
   assert.match(text, /^Departs: 7:15 AM$/m);
-  assert.match(text, /^To: Chicago Airport, IL – Terminal 1 ground transportation$/m);
+  assert.match(text, /^Drop-off: Chicago Airport, IL – Terminal 1 ground transportation$/m);
   assert.match(text, /^Arrives: 8:45 AM$/m);
   assert.match(text, /^Operated by: Example Coach Inc$/m);
   assert.match(text, /^Passengers: Jane Traveler, John Traveler$/m);
@@ -568,4 +568,29 @@ test('the formatted version of a bus ride carries the same content and escapes m
   assert.match(html, /A &lt;b&gt;Coach&lt;\/b&gt;/);
   assert.doesNotMatch(html, /<b>Coach/);
   assert.match(html, /ABCD12/);
+});
+test('a FlixBus ride lists the pick-up and drop-off addresses and labels the booking number', () => {
+  const flix: BusRide = {
+    ...BUS_TO_AIRPORT,
+    id: 'fx',
+    provider: 'flixbus',
+    ticketReference: '3405939535',
+    departureAt: '2027-02-12T14:15:00',
+    arrivalAt: '2027-02-12T16:25:00',
+    departureCity: 'Ithaca, NY',
+    departureStop: '131 E Green St, Ithaca, NY 14850 (curbside in front of Urban Outfitters)',
+    arrivalCity: 'Rochester, NY',
+    arrivalStop: '120–124 Pleasant St, Rochester, NY 14604 (near the RTS Transit Center)',
+    operator: undefined,
+    passengerNames: [],
+  };
+  const text = buildItinerary([], { buses: [flix] });
+  assert.match(text, /^BUS$/m);
+  assert.match(text, /^FlixBus$/m);
+  assert.match(text, /^Pick-up: Ithaca, NY – 131 E Green St, Ithaca, NY 14850 \(curbside in front of Urban Outfitters\)$/m);
+  assert.match(text, /^Departs: 2:15 PM$/m);
+  assert.match(text, /^Drop-off: Rochester, NY – 120–124 Pleasant St, Rochester, NY 14604 \(near the RTS Transit Center\)$/m);
+  assert.match(text, /^Arrives: 4:25 PM$/m);
+  assert.match(text, /^Booking number: 3405939535$/m);
+  assert.match(buildItineraryHtml([], { buses: [flix] }), /131 E Green St/);
 });

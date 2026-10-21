@@ -1,8 +1,15 @@
 /** Which bus company issued a ticket. */
-export type BusProvider = 'ourbus';
+export type BusProvider = 'ourbus' | 'flixbus';
 
 export const BUS_PROVIDER_LABELS: Record<BusProvider, string> = {
   ourbus: 'OurBus',
+  flixbus: 'FlixBus',
+};
+
+/** What each company calls the code on its ticket. */
+export const BUS_REFERENCE_LABELS: Record<BusProvider, string> = {
+  ourbus: 'Ticket reference',
+  flixbus: 'Booking number',
 };
 
 /**

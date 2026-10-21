@@ -1,13 +1,15 @@
 import type { BusProvider, ParsedBusRide } from '../models/BusRide.js';
+import { lookupBusStop } from '../data/busStops.js';
 import type { EmailMessage } from './EmailMessage.js';
 import { isoDate, labelValue, monthNumber, to24h, toLines } from './emailParsingUtils.js';
 import { unwrapForwarded } from './forwardedEmail.js';
 
 /**
- * Pure parsing for bus ticket emails (OurBus / Rally). The ticket, and the
- * "operator change" update that repeats the whole ticket, share one layout:
- * a reference code, DATE OF TRAVEL, passengers, then a boarding stop and a
- * final stop, each with a city and a time.
+ * Pure parsing for bus ticket emails (OurBus / Rally, FlixBus). OurBus's
+ * ticket, and its "operator change" update that repeats the whole ticket, share
+ * one layout: a reference code, DATE OF TRAVEL, passengers, then a boarding stop
+ * and a final stop, each with a city and a time. FlixBus has its own layout
+ * (see {@link parseFlix}).
  */
 
 export type BusEventType = 'booked' | 'cancelled';
@@ -25,6 +27,7 @@ export interface BusRideEvent {
 
 const SENDER_PATTERNS: Record<BusProvider, RegExp> = {
   ourbus: /@(?:[a-z0-9-]+\.)*(?:ourbus\.com|rally\.co)\b/i,
+  flixbus: /@(?:[a-z0-9-]+\.)*(?:flixbus\.[a-z.]+|flix\.com)\b/i,
 };
 
 /** Which bus company sent this `From` header, if any. */
@@ -49,8 +52,13 @@ export const BUS_EMAIL_QUERIES: { provider: BusProvider | 'forwarded'; primary: 
     fallback: 'from:ourbus.com subject:(ticket OR receipt OR trip OR booking OR cancel OR cancelled OR canceled)',
   },
   {
+    provider: 'flixbus',
+    primary: 'from:noreply@booking.flixbus.com',
+    fallback: 'from:(flixbus.com OR flix.com) subject:(booking OR ticket OR confirmation OR cancel OR cancelled OR canceled)',
+  },
+  {
     provider: 'forwarded',
-    primary: 'subject:(fwd OR fw) (ourbus OR "ticket and receipt")',
+    primary: 'subject:(fwd OR fw) (ourbus OR flixbus OR "ticket and receipt")',
   },
 ];
 
@@ -169,6 +177,84 @@ function parseOurBus(m: EmailMessage, rawLines: string[]): { ticketReference?: s
   };
 }
 
+const FLIX_DATE = /^(?:[A-Za-z]{3,9},\s*)?([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/;
+const FLIX_LABELS = /^(?:station|time|departure|arrival)$/i;
+
+/** One "Departure"/"Arrival" block: the station name and the time. */
+function readFlixBlock(lines: string[], at: number): { station: string; time: string } | undefined {
+  let station: string | undefined;
+  let time: string | undefined;
+  for (let i = at + 1; i < Math.min(lines.length, at + 7); i += 1) {
+    const line = lines[i]!;
+    if (/^(?:departure|arrival)$/i.test(line)) break;
+    if (TIME_ONLY.test(line)) time ??= to24h(line);
+    else if (!FLIX_LABELS.test(line)) station ??= line;
+    if (station && time) break;
+  }
+  return station && time ? { station, time } : undefined;
+}
+
+function flixDateBefore(lines: string[], index: number): string | undefined {
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const m = FLIX_DATE.exec(lines[i]!);
+    const month = m && monthNumber(m[1]!);
+    if (m && month) return isoDate(Number(m[3]), month, Number(m[2]));
+  }
+  return undefined;
+}
+
+/** "Rochester Bus Stop" → "Rochester". */
+function stationCity(station: string): string {
+  return station.replace(/\s+(?:bus\s+)?(?:stop|station)$/i, '').trim();
+}
+
+/**
+ * FlixBus confirmations give a date, then "Departure / Station / <name> / Time"
+ * and "Arrival / …" blocks, with no street address; known stations are filled
+ * in from the stop table. A trip with a change of bus has several block pairs:
+ * the ride runs from the first departure to the last arrival.
+ */
+function parseFlix(
+  m: EmailMessage,
+  lines: string[],
+  subject: string,
+): { ticketReference?: string; ride?: ParsedBusRide } {
+  const text = lines.join('\n');
+  const number = text.match(/Booking Number\s*:?\s*(\d{6,})/i)?.[1] ?? subject.match(/#\s*(\d{6,})/)?.[1];
+  const ticketReference = number?.trim();
+
+  const departures = lines.flatMap((l, i) => (/^departure$/i.test(l) ? [i] : []));
+  const arrivals = lines.flatMap((l, i) => (/^arrival$/i.test(l) ? [i] : []));
+  const first = departures[0] !== undefined ? readFlixBlock(lines, departures[0]) : undefined;
+  const lastArrivalAt = arrivals[arrivals.length - 1];
+  const last = lastArrivalAt !== undefined ? readFlixBlock(lines, lastArrivalAt) : undefined;
+  const departDate = departures[0] !== undefined ? flixDateBefore(lines, departures[0]) : undefined;
+  const arriveDate = lastArrivalAt !== undefined ? flixDateBefore(lines, lastArrivalAt) : undefined;
+  if (!ticketReference || !first || !last || !departDate) return { ticketReference };
+
+  const from = lookupBusStop('flixbus', first.station);
+  const to = lookupBusStop('flixbus', last.station);
+  // Without its own date (one date line for the whole trip) the arrival is the
+  // same day, or the next when the clock wraps past midnight.
+  const arrivalDate = arriveDate && arriveDate >= departDate ? arriveDate : last.time < first.time ? addDay(departDate) : departDate;
+  return {
+    ticketReference,
+    ride: {
+      provider: 'flixbus',
+      ticketReference,
+      departureAt: `${departDate}T${first.time}:00`,
+      arrivalAt: `${arrivalDate}T${last.time}:00`,
+      departureCity: from?.city ?? stationCity(first.station),
+      departureStop: from?.stop,
+      arrivalCity: to?.city ?? stationCity(last.station),
+      arrivalStop: to?.stop,
+      passengerNames: [],
+      emailId: m.id,
+      bookedAt: new Date(m.internalDate).toISOString(),
+    },
+  };
+}
+
 /**
  * Parse one email into a bus event: a booking (a ticket or an update that
  * repeats it), or a cancellation. Returns nothing for marketing mail.
@@ -178,7 +264,9 @@ export function parseBusEmail(message: EmailMessage): BusRideEvent[] {
   const provider = busProviderFor(original.from);
   if (!provider) return [];
 
-  const outcome = parseOurBus(original, toLines(original.body ?? ''));
+  const lines = toLines(original.body ?? '');
+  const outcome =
+    provider === 'flixbus' ? parseFlix(original, lines, original.subject ?? '') : parseOurBus(original, lines);
   if (!outcome.ticketReference) return [];
 
   const cancelled = CANCELLATION_SUBJECT.test(original.subject ?? '');

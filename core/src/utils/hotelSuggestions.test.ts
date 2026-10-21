@@ -154,3 +154,16 @@ test('rides that never touch an airport are not suggested, and no flights means 
   assert.deepEqual(suggestBusRides([outbound, ret], rides), []);
   assert.deepEqual(suggestBusRides([], [bus('x', '2026-06-07T09:00:00', 'Ithaca, NY', 'Syracuse Airport, NY')]), []);
 });
+test('a bus into the city of the first flight\'s airport is suggested even when the stop is not an airport', () => {
+  const rocFlight = { ...flight('2027-02-12T19:00:00', '2027-02-12T20:00:00'), route: { origin: { code: 'ROC' }, destination: { code: 'MDW' } } } as Flight;
+  const rides = [
+    bus('feeder', '2027-02-12T14:15:00', 'Ithaca, NY', 'Rochester, NY'),
+    bus('other-city', '2027-02-12T14:15:00', 'Ithaca, NY', 'Syracuse, NY'),
+    bus('too-early', '2027-02-09T14:15:00', 'Ithaca, NY', 'Rochester, NY'),
+  ];
+  assert.deepEqual(suggestBusRides([rocFlight], rides).map((r) => r.id), ['feeder']);
+
+  const home = { ...flight('2027-02-20T10:00:00', '2027-02-20T12:00:00'), route: { origin: { code: 'MDW' }, destination: { code: 'ROC' } } } as Flight;
+  const back = [bus('home', '2027-02-20T14:00:00', 'Rochester, NY', 'Ithaca, NY')];
+  assert.deepEqual(suggestBusRides([home], back).map((r) => r.id), ['home']);
+});

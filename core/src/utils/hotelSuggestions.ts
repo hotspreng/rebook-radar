@@ -1,6 +1,7 @@
 import type { Flight } from '../models/Flight.js';
 import type { HotelStay } from '../models/HotelStay.js';
 import type { RentalCar } from '../models/RentalCar.js';
+import { lookupAirport } from '../data/airports.js';
 import { busAirportDirection, type BusRide } from '../models/BusRide.js';
 
 function shiftDay(date: string, days: number): string {
@@ -12,7 +13,9 @@ function shiftDay(date: string, days: number): string {
  * Airport bus transfers for the trip the given flights make up: a ride that
  * ends at an airport within a day before the first departure, or one that
  * starts at an airport within a day after the last arrival. Rides whose stops
- * don't mention an airport are never suggested. Results are in departure order.
+ * don't mention an airport are suggested only when they end in (or start from)
+ * the city of the first departure (last arrival) airport — a bus to Rochester
+ * before a flight out of ROC. Results are in departure order.
  */
 export function suggestBusRides(flights: Flight[], rides: BusRide[]): BusRide[] {
   const dates = flights.flatMap((f) =>
@@ -23,13 +26,24 @@ export function suggestBusRides(flights: Flight[], rides: BusRide[]): BusRide[] 
   const start = dates.reduce((a, b) => (a < b ? a : b));
   const end = dates.reduce((a, b) => (a > b ? a : b));
 
+  const byDeparture = [...flights].sort((a, b) => a.departureDateTime.localeCompare(b.departureDateTime));
+  const cityOf = (code: string | undefined): string | undefined => {
+    const city = code ? lookupAirport(code)?.city : undefined;
+    return city?.split(',')[0]?.trim().toLowerCase();
+  };
+  const originCity = cityOf(byDeparture[0]?.route.origin.code);
+  const finalCity = cityOf(byDeparture[byDeparture.length - 1]?.route.destination.code);
+  const sameCity = (place: string, city: string | undefined): boolean =>
+    city !== undefined && place.split(',')[0]!.trim().toLowerCase() === city;
+
   return rides
     .filter((ride) => {
       const day = ride.departureAt.slice(0, 10);
       const direction = busAirportDirection(ride);
-      if (direction === 'to') return day >= shiftDay(start, -1) && day <= start;
-      if (direction === 'from') return day >= end && day <= shiftDay(end, 1);
-      return false;
+      const toAirport = direction === 'to' || (direction === undefined && sameCity(ride.arrivalCity, originCity));
+      const fromAirport = direction === 'from' || (direction === undefined && sameCity(ride.departureCity, finalCity));
+      if (toAirport && day >= shiftDay(start, -1) && day <= start) return true;
+      return fromAirport && day >= end && day <= shiftDay(end, 1);
     })
     .sort((a, b) => a.departureAt.localeCompare(b.departureAt));
 }
