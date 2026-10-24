@@ -5,6 +5,7 @@ import {
   ArrowRight,
   ChevronRight,
   Download,
+  Filter,
   Inbox,
   Plus,
   RefreshCw,
@@ -32,6 +33,13 @@ function importProgressLabel(p: EmailImportProgress): string {
   return `Done · ${p.scanned} email${p.scanned === 1 ? '' : 's'} scanned${trips}`;
 }
 
+/** "2026-11" → "November 2026". */
+function monthLabel(value: string): string {
+  const [year, month] = value.split('-').map(Number);
+  const names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return `${names[(month ?? 1) - 1] ?? value} ${year}`;
+}
+
 /** One-line live status for an in-flight "check all prices" sweep. */
 function priceCheckProgressLabel(p: PriceCheckProgress): string {
   const rebook =
@@ -57,6 +65,8 @@ export function Dashboard(): JSX.Element {
   const [selected, setSelected] = useState<FlightWithComparison | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [airlineFilter, setAirlineFilter] = useState<string>('all');
+  const [monthFilter, setMonthFilter] = useState<string>('all');
+  const [checkingFiltered, setCheckingFiltered] = useState<{ checked: number; total: number } | null>(null);
 
   // Scoped to the SAME passenger too: a confirmation number can cover several
   // travelers (each tracked as their own flight), and those are separate
@@ -145,17 +155,42 @@ export function Dashboard(): JSX.Element {
     });
   }, []);
 
+  // Months (of departure) that still have upcoming flights, for the month filter.
+  // Read from the stored wall-clock date, never through `Date`, so a flight never
+  // slips into the neighboring month in another timezone.
+  const monthOptions = useMemo(() => {
+    const now = Date.now();
+    const present = new Set<string>();
+    for (const f of flights) {
+      const departed = Date.parse(f.flight.departureDateTime);
+      if (Number.isFinite(departed) && departed < now) continue;
+      const month = f.flight.departureDateTime.slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(month)) present.add(month);
+    }
+    const items = [...present].sort().map((value) => ({ value, label: monthLabel(value) }));
+    return [{ value: 'all', label: 'All months' }, ...items];
+  }, [flights]);
+  // A month that has since emptied out (flown, deleted) falls back to all months.
+  const activeMonth = monthOptions.some((o) => o.value === monthFilter) ? monthFilter : 'all';
+
   const filtered = useMemo(() => {
     const now = Date.now();
     return flights.filter((f) => {
       if (passengerFilter !== 'all' && f.flight.passengerId !== passengerFilter) return false;
       if (airlineFilter !== 'all' && operatingAirline(f.flight) !== airlineFilter) return false;
+      if (activeMonth !== 'all' && f.flight.departureDateTime.slice(0, 7) !== activeMonth) return false;
       // Flown flights move to the Past Flights blade.
       const departed = Date.parse(f.flight.departureDateTime);
       if (Number.isFinite(departed) && departed < now) return false;
       return true;
     });
-  }, [flights, passengerFilter, airlineFilter]);
+  }, [flights, passengerFilter, airlineFilter, activeMonth]);
+
+  // Flights worth a price lookup in the current filter: Companion Pass tickets have no fare to compare.
+  const checkableFiltered = useMemo(
+    () => filtered.filter((f) => !isCompanionPassFlight(f.flight)),
+    [filtered],
+  );
 
   // Airlines actually present among the tracked flights, for the filter
   // dropdown. Grouped by the OPERATING carrier (see operatingAirline), so a
@@ -218,6 +253,38 @@ export function Dashboard(): JSX.Element {
     setCheckProgress({ phase: 'checking', checked: 0, total: 0, rebookFound: 0 });
     await checkAll();
     setCheckingAll(false);
+  }
+
+  /** Sync prices only for the flights the current filters show, one at a time. */
+  async function handleCheckFiltered(): Promise<void> {
+    const targets = checkableFiltered.map((f) => f.flight.id);
+    if (targets.length === 0) return;
+    let failed = 0;
+    setCheckingFiltered({ checked: 0, total: targets.length });
+    try {
+      for (const [i, id] of targets.entries()) {
+        try {
+          await api.pricing.checkOne(id);
+        } catch {
+          failed += 1;
+        }
+        setCheckingFiltered({ checked: i + 1, total: targets.length });
+      }
+      await refreshFlights();
+      if (selected) {
+        const updated = useAppStore.getState().flights.find((f) => f.flight.id === selected.flight.id);
+        if (updated) setSelected(updated);
+      }
+      const done = targets.length - failed;
+      pushToast(
+        failed > 0 ? 'error' : 'success',
+        failed > 0
+          ? `Checked ${done} of ${targets.length} flights; ${failed} failed.`
+          : `Checked ${done} flight${done === 1 ? '' : 's'}.`,
+      );
+    } finally {
+      setCheckingFiltered(null);
+    }
   }
 
   async function handleCheckOne(id: string): Promise<void> {
@@ -295,12 +362,28 @@ export function Dashboard(): JSX.Element {
             <Download size={16} /> Export CSV
           </Button>
           <div className="relative">
-            <Button variant="secondary" onClick={handleCheckAll} disabled={checkingAll}>
+            <Button variant="secondary" onClick={handleCheckAll} disabled={checkingAll || checkingFiltered != null}>
               <RefreshCw size={16} className={checkingAll ? 'animate-spin' : ''} /> Check all prices
             </Button>
             {checkProgress && (
               <span className="absolute left-0 top-full mt-1 whitespace-nowrap text-[11px] text-slate-400">
                 {priceCheckProgressLabel(checkProgress)}
+              </span>
+            )}
+          </div>
+          <div className="relative">
+            <Button
+              variant="secondary"
+              onClick={() => void handleCheckFiltered()}
+              disabled={checkingAll || checkingFiltered != null || checkableFiltered.length === 0}
+              title="Sync prices only for the flights shown by the current filters"
+            >
+              <Filter size={16} className={checkingFiltered ? 'animate-pulse' : ''} /> Check filtered prices
+              <span className="rounded-full bg-white/10 px-1.5 text-[11px]">{checkableFiltered.length}</span>
+            </Button>
+            {checkingFiltered && (
+              <span className="absolute left-0 top-full mt-1 whitespace-nowrap text-[11px] text-slate-400">
+                Checking {checkingFiltered.checked}/{checkingFiltered.total} flights…
               </span>
             )}
           </div>
@@ -349,6 +432,7 @@ export function Dashboard(): JSX.Element {
           onChange={setAirlineFilter}
           options={airlineOptions}
         />
+        <FilterSelect label="Month" value={activeMonth} onChange={setMonthFilter} options={monthOptions} />
       </div>
 
       <div className="flex flex-1 flex-col overflow-hidden px-7 pb-7">
