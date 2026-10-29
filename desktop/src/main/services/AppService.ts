@@ -1972,7 +1972,9 @@ export class AppService {
    * Booking anchors (points paid + the cash fare then) of the other travelers
    * booked on this exact flight, so everyone on it shares one current estimate.
    */
-  private async sameFlightAnchors(flight: Flight): Promise<{ points: number; cashUsd: number }[]> {
+  private async sameFlightAnchors(
+    flight: Flight,
+  ): Promise<{ points: number; cashUsd: number; bookedOn?: string }[]> {
     if (flight.originalCost.purchaseType !== PurchaseType.Points) return [];
     const departs = flight.departureDateTime.slice(0, 16);
     const all = await this.deps.flights.list();
@@ -1988,7 +1990,7 @@ export class AppService {
           (f.originalCost.points ?? 0) > 0 &&
           (f.originalMarketCashUsd ?? 0) > 0,
       )
-      .map((f) => ({ points: f.originalCost.points!, cashUsd: f.originalMarketCashUsd! }));
+      .map((f) => ({ points: f.originalCost.points!, cashUsd: f.originalMarketCashUsd!, bookedOn: f.bookingDate }));
   }
 
   private async toFlightWithComparison(

@@ -264,24 +264,26 @@ test('price increase recommends Keep', () => {
 
 const opts = { pointValueCents: 1.4, savingsThresholdUsd: 25, savingsThresholdPoints: 2000, now: fixedNow };
 
-test('two travelers on the same flight get the same current points, scaled from the nearest booking anchor', () => {
+test('two travelers on the same flight get the same current points, scaled from the most recent booking', () => {
   const quote = makeQuote({ cashUsd: 241, pointsEstimated: true });
   const early = makeFlight({
     id: 'early',
+    bookingDate: '2026-08-19',
     originalCost: { purchaseType: PurchaseType.Points, points: 8000, taxesAndFeesUsd: 5.6 },
     originalMarketCashUsd: 129,
   });
   const late = makeFlight({
     id: 'late',
+    bookingDate: '2026-09-11',
     originalCost: { purchaseType: PurchaseType.Points, points: 9000, taxesAndFeesUsd: 5.6 },
     originalMarketCashUsd: 192,
   });
-  const anchorOf = (f: Flight) => ({ points: f.originalCost.points!, cashUsd: f.originalMarketCashUsd! });
+  const anchorOf = (f: Flight) => ({ points: f.originalCost.points!, cashUsd: f.originalMarketCashUsd!, bookedOn: f.bookingDate });
 
   const a = service.compare(early, quote, { ...opts, sameFlightAnchors: [anchorOf(late)] });
   const b = service.compare(late, quote, { ...opts, sameFlightAnchors: [anchorOf(early)] });
 
-  // $192 is nearer to $241 than $129 is, so both scale from 9,000 pts / $192.
+  // The September booking is the most recent, so both scale from 9,000 pts / $192.
   const expected = Math.round((9000 * 241) / 192);
   assert.equal(a.currentAmount, expected);
   assert.equal(b.currentAmount, expected);
@@ -292,7 +294,7 @@ test('two travelers on the same flight get the same current points, scaled from 
 test('a ticket with no anchor of its own borrows one from the identical flight', () => {
   const flight = makeFlight({ originalCost: { purchaseType: PurchaseType.Points, points: 9000, taxesAndFeesUsd: 5.6 } });
   const quote = makeQuote({ cashUsd: 241, pointsEstimated: true });
-  const result = service.compare(flight, quote, { ...opts, sameFlightAnchors: [{ points: 8000, cashUsd: 129 }] });
+  const result = service.compare(flight, quote, { ...opts, sameFlightAnchors: [{ points: 8000, cashUsd: 129, bookedOn: '2026-08-19' }] });
   assert.equal(result.currentAmount, Math.round((8000 * 241) / 129));
 });
 
@@ -330,4 +332,35 @@ test('companion detection: only Southwest cash tickets under $20 all-in', () => 
     isCompanionPassFlight(makeFlight({ airline: Airline.Southwest, source: FlightSource.Manual, originalCost: { purchaseType: PurchaseType.Cash, cashUsd: 12, taxesAndFeesUsd: 11.2 } })),
     false,
   );
+});
+
+test('a cheaper-fare traveler on the flight does not drag the other traveler estimate down by half', () => {
+  // Amy booked 9,000 pts when the fare was $208; Emily booked 17,000 pts at $225.
+  // With the fare now $198 (about 12% below Emily's), Emily's points must fall
+  // about 12% too — not to the ~8,567 that Amy's ratio would give.
+  const amy = makeFlight({
+    id: 'amy',
+    bookingDate: '2026-10-07',
+    originalCost: { purchaseType: PurchaseType.Points, points: 9000, taxesAndFeesUsd: 5.6 },
+    originalMarketCashUsd: 208,
+  });
+  const emily = makeFlight({
+    id: 'emily',
+    bookingDate: '2026-10-24',
+    originalCost: { purchaseType: PurchaseType.Points, points: 17000, taxesAndFeesUsd: 5.6 },
+    originalMarketCashUsd: 225,
+  });
+  const quote = makeQuote({ cashUsd: 198, pointsEstimated: true });
+  const emilyResult = service.compare(emily, quote, {
+    ...opts,
+    sameFlightAnchors: [{ points: 9000, cashUsd: 208, bookedOn: '2026-10-07' }],
+  });
+  assert.equal(emilyResult.currentAmount, Math.round((17000 * 198) / 225));
+  assert.equal(emilyResult.savingsNative, 17000 - Math.round((17000 * 198) / 225));
+  // Amy sees the same current price for the same flight.
+  const amyResult = service.compare(amy, quote, {
+    ...opts,
+    sameFlightAnchors: [{ points: 17000, cashUsd: 225, bookedOn: '2026-10-24' }],
+  });
+  assert.equal(amyResult.currentAmount, emilyResult.currentAmount);
 });

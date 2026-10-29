@@ -27,10 +27,10 @@ export interface ComparisonOptions {
   /**
    * Booking anchors (points paid and the cash fare at that booking) of OTHER
    * travelers on this exact flight. Identical flights share one market price,
-   * so the current points estimate scales from whichever anchor's cash fare is
-   * closest to today's, and every traveler on the flight sees the same estimate.
+   * so the current points estimate scales from the most recently booked anchor,
+   * and every traveler on the flight sees the same estimate.
    */
-  sameFlightAnchors?: { points: number; cashUsd: number }[];
+  sameFlightAnchors?: { points: number; cashUsd: number; bookedOn?: string }[];
   /** Clock injection for testability. */
   now?: () => Date;
 }
@@ -134,17 +134,17 @@ export class PricingComparisonService {
     }
 
     // Resolve the current amount in the SAME unit as the original purchase.
-    // Points are scaled from the booking anchor closest to today's cash fare
-    // (this ticket's own, or another traveler's on the identical flight).
+    // Points are scaled from the most recent booking's anchor (this ticket's
+    // own, or another traveler's on the identical flight).
     const ownAnchor =
       isPoints && actualCash != null && actualCash > 0 && originalPoints > 0
-        ? { points: originalPoints, cashUsd: actualCash }
+        ? { points: originalPoints, cashUsd: actualCash, bookedOn: flight.bookingDate }
         : undefined;
     const { currentAmount, currentValueUsd } = this.resolveCurrent(
       isPoints,
       quote,
       effectiveCpp,
-      nearestAnchor([...(ownAnchor ? [ownAnchor] : []), ...(options.sameFlightAnchors ?? [])], quote.cashUsd),
+      pickAnchor([...(ownAnchor ? [ownAnchor] : []), ...(options.sameFlightAnchors ?? [])], quote.cashUsd),
     );
 
     const savingsNative = round(originalAmount - currentAmount, isPoints ? 0 : 2);
@@ -216,9 +216,10 @@ export class PricingComparisonService {
    * actually locked in (e.g. 8,500 pts / $161 ⇒ $211 now ≈ 11,140 pts).
    *
    * When several travelers on the identical flight each captured an anchor, the
-   * one whose cash fare is closest to today's is used for all of them (points
-   * are not linear in cash, so the nearest data point is the best guide), which
-   * keeps the estimate the same for everyone on that flight.
+   * most recently booked one is used for all of them (the points-to-cash ratio
+   * drifts with time, so the freshest booking is the best guide), which keeps
+   * the estimate the same for everyone on that flight. A far-older booking's
+   * ratio is never borrowed over a newer one.
    *
    * Without an anchor, fall back to a real points quote, then to converting the
    * cash quote at the generic settings rate.
@@ -273,16 +274,26 @@ export class PricingComparisonService {
 interface Anchor {
   points: number;
   cashUsd: number;
+  /** Booking date (YYYY-MM-DD); later is fresher. */
+  bookedOn?: string;
 }
 
-/** The anchor whose cash fare is closest to `cashUsd`; with no cash fare, the first (the ticket's own). */
-function nearestAnchor(anchors: Anchor[], cashUsd: number | undefined): Anchor | undefined {
+/**
+ * The anchor from the most recent booking: the points-to-cash relationship
+ * drifts with time and fare class, so the freshest observation is the best
+ * guide to today's price, and every traveler on the flight gets the same one.
+ * Ties (same day, or no dates) go to the fare nearest today's, then the higher.
+ */
+function pickAnchor(anchors: Anchor[], cashUsd: number | undefined): Anchor | undefined {
   const usable = anchors.filter((a) => a.points > 0 && a.cashUsd > 0);
-  if (usable.length === 0 || cashUsd == null) return usable[0];
+  if (usable.length === 0) return undefined;
+  const distance = (a: Anchor): number => (cashUsd == null ? 0 : Math.abs(a.cashUsd - cashUsd));
   return usable.reduce((best, a) => {
-    const d = Math.abs(a.cashUsd - cashUsd);
-    const bestD = Math.abs(best.cashUsd - cashUsd);
-    // On a tie prefer the higher (more recent, usually) fare so the choice is deterministic.
+    const day = a.bookedOn ?? '';
+    const bestDay = best.bookedOn ?? '';
+    if (day !== bestDay) return day > bestDay ? a : best;
+    const d = distance(a);
+    const bestD = distance(best);
     return d < bestD || (d === bestD && a.cashUsd > best.cashUsd) ? a : best;
   });
 }
