@@ -449,6 +449,7 @@ export class AppService {
     // capped result set. The fold dispatches each message to the right parser.
     let southwest: EmailMessage[];
     let united: EmailMessage[];
+    let delta: EmailMessage[];
     let american: EmailMessage[];
     let airCanada: EmailMessage[];
     try {
@@ -461,6 +462,17 @@ export class AppService {
         source,
         'from:(Receipts@united.com OR notifications@united.com) newer_than:13m',
         'from:united.com newer_than:13m',
+      );
+      // Delta also mails confirmations from addresses beyond the usual three, and
+      // the exact-sender query alone would hide those whenever an older email
+      // matched it. So the known senders are OR'd with any delta.com sender whose
+      // subject reads like a booking, change or cancellation (marketing excluded).
+      delta = await this.fetchTransactional(
+        source,
+        '(from:(DeltaAirLines@e.delta.com OR DeltaAirLines@t.delta.com OR confirmation@delta.com) OR ' +
+          '(from:delta.com subject:(confirmation OR receipt OR eticket OR award OR "your trip" OR itinerary OR cancel OR canceled OR cancelled OR refund OR change OR changed))) ' +
+          'newer_than:13m',
+        'from:delta.com newer_than:13m',
       );
       american = await this.fetchTransactional(
         source,
@@ -476,10 +488,11 @@ export class AppService {
       await this.clearGmailIfAuthExpired(err);
       throw err;
     }
-    const messages = [...southwest, ...united, ...american, ...airCanada];
+    const messages = [...southwest, ...united, ...delta, ...american, ...airCanada];
     log.info('Fetched transactional emails', {
       southwest: southwest.length,
       united: united.length,
+      delta: delta.length,
       american: american.length,
       airCanada: airCanada.length,
     });
