@@ -1174,10 +1174,19 @@ export class AppService {
       ...existing,
       partnerConfirmationNumber: trip.partnerConfirmationNumber ?? existing.partnerConfirmationNumber,
       route: {
-        origin: { code: trip.origin || existing.route.origin.code, name: existing.route.origin.name },
+        origin: {
+          code: trip.origin || existing.route.origin.code,
+          name:
+            trip.origin && trip.origin !== existing.route.origin.code
+              ? (segments?.[0]?.origin.name ?? trip.origin)
+              : existing.route.origin.name,
+        },
         destination: {
           code: trip.destination || existing.route.destination.code,
-          name: existing.route.destination.name,
+          name:
+            trip.destination && trip.destination !== existing.route.destination.code
+              ? (segments?.[segments.length - 1]?.destination.name ?? trip.destination)
+              : existing.route.destination.name,
         },
       },
       departureDateTime: trip.departureDateTime || existing.departureDateTime,

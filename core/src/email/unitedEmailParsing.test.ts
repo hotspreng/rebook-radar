@@ -318,3 +318,34 @@ test('parseUnitedMileageCredit ignores non-United senders', () => {
     undefined,
   );
 });
+
+test('parseUnitedEmail keeps a partner-operated first segment (VL) in a connecting award trip', () => {
+  const body = `
+ Confirmation Number:
+ ABC123
+ Flight 1 of 2 VL925 Class: Economy (X)
+ Sun, Apr 25, 2027 Sun, Apr 25, 2027
+ 08:30 AM --> 11:05 AM
+ London, GB (LHR) Frankfurt, DE (FRA)
+ Flight Operated by Lufthansa City Airlines.
+ Flight 2 of 2 UA906 Class: United Economy (X)
+ Sun, Apr 25, 2027 Sun, Apr 25, 2027
+ 12:40 PM --> 02:50 PM
+ Frankfurt, DE (FRA) Chicago, IL, US (ORD)
+ Traveler Details
+ DOE/JANE
+ Purchase Summary
+ Total Per Passenger: 40,000 miles + 234.79 USD
+`;
+  const event = parseUnitedEmail(
+    msg({ subject: 'eTicket Itinerary and Receipt for Confirmation ABC123', body }),
+  );
+  const trip = event!.trip!;
+  assert.equal(trip.origin, 'LHR');
+  assert.equal(trip.destination, 'ORD');
+  assert.equal(trip.departureDateTime, '2027-04-25T08:30:00');
+  assert.deepEqual(
+    trip.segments?.map((s) => s.flightNumber),
+    ['VL 925', 'UA 906'],
+  );
+});

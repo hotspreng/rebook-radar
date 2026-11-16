@@ -218,7 +218,7 @@ interface ParsedSegment {
  *   Chicago, IL, US (ORD) Syracuse, NY, US (SYR)
  */
 const SEGMENT_RE =
-  /Flight\s+\d+\s+of\s+\d+\s+UA\s*(\d+)[^\n]*\n\s*([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})\s+([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})\s*\n\s*(\d{1,2}:\d{2}\s*[AP]M)\s*(?:-->)?\s*(\d{1,2}:\d{2}\s*[AP]M)\s*\n\s*([^()\n]+?)\s*\(([A-Z]{3})\)\s+([^()\n]+?)\s*\(([A-Z]{3})\)/gi;
+  /Flight\s+\d+\s+of\s+\d+\s+([A-Z0-9]{2})\s*(\d+)[^\n]*\n\s*([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})\s+([A-Za-z]{3},\s*[A-Za-z]{3}\s*\d{1,2},\s*\d{4})\s*\n\s*(\d{1,2}:\d{2}\s*[AP]M)\s*(?:-->)?\s*(\d{1,2}:\d{2}\s*[AP]M)\s*\n\s*([^()\n]+?)\s*\(([A-Z]{3})\)\s+([^()\n]+?)\s*\(([A-Z]{3})\)/gi;
 
 /**
  * Match a single flight block in a shared "Travel itinerary" email (sent from
@@ -238,7 +238,7 @@ const SEGMENT_RE =
  * destination code. Tolerant of the heavy blank-line padding United inserts.
  */
 const ITINERARY_SEGMENT_RE =
-  /UA\s*(\d+)\s+operated by[\s\S]*?\n\s*([A-Z][a-z]+\s+\d{1,2},\s*\d{4})\s*\n[\s\S]*?(\d{1,2}:\d{2}\s*[ap]m)\s+(\d{1,2}:\d{2}\s*[ap]m)[\s\S]*?\n\s*([A-Z]{3})\s+\d{1,2}H[^\n]*\n\s*([A-Z]{3})\b/gi;
+  /\b([A-Z0-9]{2})\s*(\d+)\s+operated by[\s\S]*?\n\s*([A-Z][a-z]+\s+\d{1,2},\s*\d{4})\s*\n[\s\S]*?(\d{1,2}:\d{2}\s*[ap]m)\s+(\d{1,2}:\d{2}\s*[ap]m)[\s\S]*?\n\s*([A-Z]{3})\s+\d{1,2}H[^\n]*\n\s*([A-Z]{3})\b/gi;
 
 const MONTHS: Record<string, string> = {
   jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
@@ -263,12 +263,23 @@ function toIso(dateText: string, timeText: string): string {
 function parseUnitedReceiptSegments(body: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
   for (const m of body.matchAll(SEGMENT_RE)) {
-    const [, flightNum, depDate, arrDate, depTime, arrTime, origName, origCode, destName, destCode] =
-      m;
+    const [
+      ,
+      carrier,
+      flightNum,
+      depDate,
+      arrDate,
+      depTime,
+      arrTime,
+      origName,
+      origCode,
+      destName,
+      destCode,
+    ] = m;
     const departureDateTime = toIso(depDate!, depTime!);
     if (!departureDateTime) continue;
     segments.push({
-      flightNumber: `UA ${flightNum}`,
+      flightNumber: `${carrier!.toUpperCase()} ${flightNum}`,
       origin: origCode!.toUpperCase(),
       originName: origName!.trim(),
       destination: destCode!.toUpperCase(),
@@ -289,11 +300,11 @@ function parseUnitedReceiptSegments(body: string): ParsedSegment[] {
 function parseUnitedItinerarySegments(body: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
   for (const m of body.matchAll(ITINERARY_SEGMENT_RE)) {
-    const [, flightNum, date, depTime, arrTime, origCode, destCode] = m;
+    const [, carrier, flightNum, date, depTime, arrTime, origCode, destCode] = m;
     const departureDateTime = toIso(date!, depTime!);
     if (!departureDateTime) continue;
     segments.push({
-      flightNumber: `UA ${flightNum}`,
+      flightNumber: `${carrier!.toUpperCase()} ${flightNum}`,
       origin: origCode!.toUpperCase(),
       originName: '',
       destination: destCode!.toUpperCase(),
