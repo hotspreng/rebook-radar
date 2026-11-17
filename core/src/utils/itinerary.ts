@@ -479,25 +479,50 @@ function buildView(inputs: ItineraryFlight[], options: ItineraryOptions): Itiner
     for (const name of names) if (name && !travelers.includes(name)) travelers.push(name);
   }
 
-  const sections: { sortKey: string; view: JourneyView }[] = [
+  // Items that start on the day a flight lands can't happen before it: a
+  // date-only check-in or pickup defaults to midday, which would otherwise sort
+  // ahead of an afternoon flight that gets you to the city.
+  const afterArrival = (startKey: string): string => {
+    const day = startKey.slice(0, 10);
+    let key = startKey;
+    for (const { flight } of journeys) {
+      const arrival = (flight.arrivalDateTime ?? '').slice(0, 16);
+      if (arrival.slice(0, 10) === day && arrival > key) key = arrival;
+    }
+    return key;
+  };
+  const carKeys = cars.map((car) =>
+    afterArrival(car.pickupAt.length > 10 ? car.pickupAt.slice(0, 16) : `${car.pickupAt}T12:00`),
+  );
+
+  // Rank breaks ties in the order things happen: fly, bus, rental car, hotel.
+  const sections: { sortKey: string; rank: number; view: JourneyView }[] = [
     ...journeys.map((journey, index) => ({
       sortKey: journey.flight.departureDateTime.slice(0, 16),
+      rank: 0,
       view: describeJourney(journey, journeyHeading(index, journeys.length), travelers, includeConfirmation),
     })),
-    ...stays.map((stay) => ({
+    ...stays.map((stay) => {
       // A date-only check-in sorts as the usual mid-afternoon check-in time.
-      sortKey: stay.checkIn.length > 10 ? stay.checkIn.slice(0, 16) : `${stay.checkIn}T15:00`,
-      view: describeStay(stay, includeConfirmation),
-    })),
-    ...cars.map((car) => ({
-      sortKey: car.pickupAt.length > 10 ? car.pickupAt.slice(0, 16) : `${car.pickupAt}T12:00`,
+      const ownKey = stay.checkIn.length > 10 ? stay.checkIn.slice(0, 16) : `${stay.checkIn}T15:00`;
+      let sortKey = afterArrival(ownKey);
+      // Pick up the rental car on arrival before heading to the hotel.
+      for (const carKey of carKeys) {
+        if (carKey.slice(0, 10) === sortKey.slice(0, 10) && carKey > sortKey) sortKey = carKey;
+      }
+      return { sortKey, rank: 3, view: describeStay(stay, includeConfirmation) };
+    }),
+    ...cars.map((car, index) => ({
+      sortKey: carKeys[index]!,
+      rank: 2,
       view: describeRental(car, includeConfirmation),
     })),
     ...buses.map((ride) => ({
       sortKey: ride.departureAt.slice(0, 16),
+      rank: 1,
       view: describeBus(ride, includeConfirmation),
     })),
-  ].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  ].sort((a, b) => a.sortKey.localeCompare(b.sortKey) || a.rank - b.rank);
 
   const kinds = [
     journeys.length > 0 ? 'Flight' : '',

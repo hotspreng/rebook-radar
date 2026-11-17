@@ -173,16 +173,25 @@ function parseMarriott(m: EmailMessage, lines: string[], text: string): Provider
   const head = lines.slice(0, checkInLine > 0 ? checkInLine : lines.length);
   const phoneIdx = head.findIndex(isPhone);
 
-  const normalizedName = (subjectName ?? '').toLowerCase().replace(/\s+/g, ' ');
+  const hotelName = subjectName ?? (phoneIdx > 1 ? head[phoneIdx - 2] : undefined);
+  const normalizedName = (hotelName ?? '').toLowerCase().replace(/\s+/g, ' ');
+  const squash = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const squashedName = squash(hotelName ?? '');
+  // Template chrome ("CONTACT US", "ReplyCode: MC|CNF|en_US") and the hotel's
+  // own name can sit between the phone and the street address.
+  const isChrome = (line: string): boolean =>
+    /^contact us$/i.test(line) || /^reply\s*code\b/i.test(line) || line.includes('|');
   const addressLines: string[] = [];
   if (phoneIdx > 0) {
-    for (let i = phoneIdx - 1; i >= Math.max(0, phoneIdx - 3); i -= 1) {
+    for (let i = phoneIdx - 1; i >= Math.max(0, phoneIdx - 4); i -= 1) {
       const line = head[i]!;
       if (normalizedName && normalizedName.includes(line.toLowerCase())) break;
+      const squashed = squash(line);
+      if (squashedName && squashed && (squashedName.includes(squashed) || squashed.includes(squashedName))) break;
+      if (isChrome(line)) break;
       addressLines.unshift(line);
     }
   }
-  const hotelName = subjectName ?? (phoneIdx > 1 ? head[phoneIdx - 2] : undefined);
 
   const checkIn = parseLabeledDateTime(text, 'check-?in');
   const checkOut = parseLabeledDateTime(text, 'check-?out');

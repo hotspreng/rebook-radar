@@ -552,3 +552,32 @@ test('fold: an AMEX trip cancellation removes the stay booked under that trip', 
   const result = foldHotelEmails([AMEX_BEIJING, AMEX, AMEX_CANCEL]);
   assert.deepEqual(result.stays.map((s) => s.bookingReference), ['ZO-AX1023-00001']);
 });
+
+test('Marriott: template chrome and the hotel name never leak into the address', () => {
+  const [event] = parseHotelEmail(
+    msg({
+      id: 'mar2',
+      subject: 'Reservation Confirmation #2AB345CDEF',
+      from: 'Marriott Bonvoy Reservations <reservations@res-marriott.com>',
+      body: `
+ReplyCode: MC|CNF|en_US
+CONTACT US
+Sample Lodge, Autograph Collection
+100 Sample Lane Sampletown, Colorado 80000 USA
+ +1-555-010-0100
+Thank you for booking with us,
+Jane Traveler.
+CHECK-IN
+Thu, Nov 19, 2026
+03:00 PM
+CHECK-OUT
+Fri, Nov 20, 2026
+11:00 AM
+Room 1 Confirmation Number: 2AB345CDEF
+`,
+    }),
+  );
+  const stay = event!.stay!;
+  assert.equal(stay.hotelName, 'Sample Lodge, Autograph Collection');
+  assert.equal(stay.address, '100 Sample Lane Sampletown, Colorado 80000 USA');
+});

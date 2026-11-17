@@ -598,3 +598,24 @@ test('a rental location written "( ROC )" still gets its airport spelled out', (
   const text = buildItinerary([], { rentals: [{ ...NATIONAL_CAR, pickupLocation: 'ROCHESTER INTL ARPT ( ROC )', returnLocation: 'ROCHESTER INTL ARPT ( ROC )' }] });
   assert.match(text, /^Pick-up location: Rochester, NY – .*\(ROC\)$/m);
 });
+test('the flight, then the rental car, then the hotel when all start the day you land', () => {
+  const lateOutbound = {
+    flight: makeFlight({
+      id: 'late',
+      route: { origin: { code: 'ORD' }, destination: { code: 'SPI' } },
+      departureDateTime: '2027-01-07T16:00:00',
+      arrivalDateTime: '2027-01-07T21:00:00',
+      segments: undefined,
+    }),
+    passengerName: 'Joshua Sprenger',
+  };
+  const text = buildItinerary([lateOutbound], {
+    // Date-only check-in defaults to 15:00, earlier than this flight even departs.
+    hotels: [{ ...MARRIOTT_STAY, checkIn: '2027-01-07', checkOut: '2027-01-09' }],
+    rentals: [{ ...NATIONAL_CAR, pickupAt: '2027-01-07' }],
+  });
+  const fly = text.indexOf('\nFLIGHT');
+  const car = text.indexOf('CAR RENTAL');
+  const hotel = text.indexOf('HOTEL STAY');
+  assert.ok(fly >= 0 && car > fly && hotel > car, 'flight, then car rental, then hotel');
+});
