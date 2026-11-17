@@ -581,3 +581,36 @@ Room 1 Confirmation Number: 2AB345CDEF
   assert.equal(stay.hotelName, 'Sample Lodge, Autograph Collection');
   assert.equal(stay.address, '100 Sample Lane Sampletown, Colorado 80000 USA');
 });
+test('an Outlook-style forward (underscore rule, From/Sent headers) is unwrapped and parsed', () => {
+  const forward = msg({
+    id: 'hil3',
+    internalDate: Date.parse('2026-05-05T15:39:00Z'),
+    subject: 'Fw: Your Jun-08-2026 Confirmation #3448000001',
+    from: 'Pat Relative <pat@example.com>',
+    body: `FYI
+
+________________________________
+From: Curio Collection by Hilton Confirmed <noreply@h6.hilton.com>
+Sent: Wednesday, April 1, 2026 12:02 AM
+To: pat@example.com <pat@example.com>
+Subject: Your Jun-08-2026 Confirmation #3448000001
+${HILTON_BODY.replace('Maps & Directions>>', 'Maps & Directions>> <https://links.example.com/a>\nView your stay in app<https://links.example.com/b>\nAdd to calendar (iOS/Outlook)')}`,
+  });
+  const unwrapped = unwrapForwarded(forward);
+  assert.equal(unwrapped.from, 'Curio Collection by Hilton Confirmed <noreply@h6.hilton.com>');
+  const [event] = parseHotelEmail(forward);
+  assert.equal(event!.confirmationNumber, '3448000001');
+  assert.doesNotMatch(event!.stay!.address ?? '', /View your stay|Add to calendar/);
+});
+
+test('AMEX Travel: bold markers and image placeholders from a text forward do not hide the hotel block', () => {
+  const body = AMEX.body
+    .replace('Hotel Confirmation #: 9070000000001', '[image: Hotel Icon]\n*Hotel Confirmation #: *9070000000001')
+    .replace('+354-5820000', '+354-5820000 <+354%205820000>')
+    .replace('Check-in:', '*Check-in:*')
+    .replace('Check-out:', '*Check-out:*');
+  const [event] = parseHotelEmail({ ...AMEX, body });
+  assert.equal(event!.confirmationNumber, '9070000000001');
+  assert.equal(event!.stay!.phone, '+354-5820000');
+  assert.equal(event!.stay!.checkIn, '2026-06-10T15:00:00');
+});

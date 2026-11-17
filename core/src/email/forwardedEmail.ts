@@ -4,6 +4,9 @@ import type { EmailMessage } from './EmailMessage.js';
 const FORWARD_MARKER =
   /^[ \t>]*-{2,}\s*(?:Forwarded message|Original Message)\s*-{2,}[ \t]*$|^[ \t>]*Begin forwarded message:[ \t]*$/im;
 
+/** Outlook/Hotmail forwards: a rule of underscores, then the From:/Sent: header block. */
+const OUTLOOK_MARKER = /^[ \t]*_{5,}[ \t]*$(?=(?:\r?\n[ \t]*)+From:)/im;
+
 const HEADER_LINE = /^(From|Date|Sent|Subject|To|Cc|Bcc|Reply-To):\s*(.*)$/i;
 
 /** Parse the "Date:" of a forwarded header, e.g. "Wed, Apr 1, 2026 at 12:02 AM". */
@@ -15,7 +18,7 @@ function parseForwardedDate(value: string | undefined): number | undefined {
 }
 
 function unwrapOnce(message: EmailMessage): EmailMessage | undefined {
-  const marker = FORWARD_MARKER.exec(message.body);
+  const marker = FORWARD_MARKER.exec(message.body) ?? OUTLOOK_MARKER.exec(message.body);
   if (!marker) return undefined;
 
   const lines = message.body.slice(marker.index + marker[0].length).split(/\r?\n/);

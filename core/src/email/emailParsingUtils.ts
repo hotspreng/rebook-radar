@@ -32,8 +32,15 @@ export function toLines(body: string): string[] {
   return body
     .replace(/[\u200b-\u200d\u2060\ufeff\u00ad]/g, '')
     .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, ' ').trim())
-    .filter((l) => l.length > 0);
+    .map((l) =>
+      l
+        // Forwarding clients add "<https://…>" link suffixes and *bold* markers.
+        .replace(/<(?:(?:https?|mailto|tel):[^>\s]*|[+(\d][^>\s]*)>/gi, ' ')
+        .replace(/\*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter((l) => l.length > 0 && !/^\[(?:image|https?:)[^\]]*\]$/i.test(l));
 }
 
 const PHONE_LINE = /^\+?\(?\d[\d\s().-]{6,}$/;

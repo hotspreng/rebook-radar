@@ -221,6 +221,8 @@ function parseMarriott(m: EmailMessage, lines: string[], text: string): Provider
 }
 
 const WEEKDAY_ONLY = /^(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day$/i;
+/** Button/link captions that sit between the property block and the stay dates. */
+const HILTON_LINK_LABEL = /^(?:view\b|add to calendar|manage\b|modify\b|cancel\b|get directions)/i;
 const HOTEL_WORDS =
   /hilton|hotel|inn\b|suites|resort|conrad|curio|doubletree|hampton|embassy|waldorf|canopy|tapestry|lxr|motto|signia|homewood|home2|tru by|graduate|spa\b/i;
 
@@ -280,7 +282,9 @@ function parseHilton(m: EmailMessage, lines: string[], text: string): ProviderOu
   if (endIdx < 0) endIdx = lines.length;
   const block = confIdx >= 0 ? lines.slice(confIdx + 1, endIdx) : [];
   const phone = block.find(isPhone);
-  const candidates = block.filter((l) => !isPhone(l) && !/^maps\b/i.test(l) && !/^\W*$/.test(l));
+  const candidates = block.filter(
+    (l) => !isPhone(l) && !/^maps\b/i.test(l) && !/^\W*$/.test(l) && !HILTON_LINK_LABEL.test(l) && !/^\[.*\]$/.test(l),
+  );
   const property = splitHiltonProperty(candidates);
 
   const guestName = text.match(/Guest Name:?\s*([^\n]+)/i)?.[1];
