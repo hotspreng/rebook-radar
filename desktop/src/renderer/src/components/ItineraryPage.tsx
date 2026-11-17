@@ -127,41 +127,37 @@ export function ItineraryPage(): JSX.Element {
   }, [rows, hotels, cars, buses]);
 
   const visibleEntries = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return entries;
+    // Every space-separated word must match somewhere ("joshua united" finds
+    // Joshua's United flights), instead of the whole phrase as one substring.
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return entries;
+    const matchesAll = (fields: (string | undefined)[]): boolean => {
+      const haystack = fields.join(' ').toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    };
     return entries.filter((entry) => {
       if (entry.kind === 'bus') {
         const r = entry.ride;
-        return [r.departureCity, r.arrivalCity, r.ticketReference, BUS_PROVIDER_LABELS[r.provider], ...r.passengerNames]
-          .join(' ')
-          .toLowerCase()
-          .includes(q);
+        return matchesAll([r.departureCity, r.arrivalCity, r.ticketReference, BUS_PROVIDER_LABELS[r.provider], ...r.passengerNames]);
       }
       if (entry.kind === 'car') {
         const c = entry.car;
-        return [c.pickupLocation, c.returnLocation, c.confirmationNumber, RENTAL_PROVIDER_LABELS[c.provider], c.driverName ?? '']
-          .join(' ')
-          .toLowerCase()
-          .includes(q);
+        return matchesAll([c.pickupLocation, c.returnLocation, c.confirmationNumber, RENTAL_PROVIDER_LABELS[c.provider], c.driverName]);
       }
       if (entry.kind === 'hotel') {
         const s = entry.stay;
-        return [s.hotelName, s.address, s.confirmationNumber, s.bookingReference, HOTEL_PROVIDER_LABELS[s.provider], ...s.guestNames]
-          .join(' ')
-          .toLowerCase()
-          .includes(q);
+        return matchesAll([s.hotelName, s.address, s.confirmationNumber, s.bookingReference, HOTEL_PROVIDER_LABELS[s.provider], ...s.guestNames]);
       }
       const f = entry.row.items[0]!.flight;
-      const haystack = [
+      return matchesAll([
         f.confirmationNumber,
         f.route.origin.code,
         f.route.destination.code,
+        f.route.origin.name,
+        f.route.destination.name,
         AIRLINE_LABELS[operatingAirline(f)],
         ...entry.row.items.map((i) => i.passengerName),
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(q);
+      ]);
     });
   }, [entries, query]);
 
