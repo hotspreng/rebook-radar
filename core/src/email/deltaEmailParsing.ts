@@ -258,7 +258,7 @@ function parseDeltaTravelers(body: string): string[] {
   const seen = new Set<string>();
   // Constrain to a single line ([ \t], not \s) so the name doesn't bleed into
   // the following all-caps lines (e.g. "FLIGHTSEAT", "DELTA 532").
-  for (const m of body.matchAll(/Name:[ \t]*([A-Z][A-Z.]+(?:[ \t]+[A-Z][A-Z.]+)+)/g)) {
+  for (const m of body.matchAll(/Name:[ \t]*([A-Z][A-Z.]*(?:[ \t]+[A-Z][A-Z.]*)+)/g)) {
     const full = titleCaseName(m[1]!);
     const key = full.toLowerCase();
     if (!seen.has(key)) {
@@ -277,7 +277,7 @@ function parseDeltaTravelers(body: string): string[] {
  */
 function parseDeltaCabin(body: string): Cabin {
   const m = body.match(
-    /\b(Basic Economy|Delta One|Delta Premium Select|Premium Select|Delta Comfort\+?|Comfort\+?|First Class|First|Delta Main|Main Cabin|Main)\s*\([A-Z0-9]\)/i,
+    /\b(Basic Economy|Delta One|Delta Premium Select|Premium Select|Delta Comfort(?:\+|\s+Classic)?|Comfort(?:\+|\s+Classic)?|First Class|First|Delta Main|Main Cabin|Main)\s*\([A-Z0-9]\)/i,
   );
   return normalizeCabin(m?.[1]);
 }
@@ -344,13 +344,27 @@ function parseDeltaTripDetails(body: string, confirmationNumber: string): Retrie
   // Detailed segments when the routing gives every airport in the path.
   let segments: RetrievedFlightSegment[] | undefined;
   if (routeCodes.length === flights.length + 1) {
-    segments = flights.map((f, i) => ({
-      origin: routeCodes[i]!,
-      destination: routeCodes[i + 1]!,
-      departureDateTime: `${date}T${f.departureTime}:00`,
-      arrivalDateTime: `${date}T${f.arrivalTime}:00`,
-      flightNumber: f.flightNumber,
-    }));
+    // Walk the day forward whenever a clock goes backwards (overnight flight or
+    // a next-day connection). The routing line uses city codes ("LON"); the
+    // baggage summary carries the real endpoint airports ("LHR"), so prefer them.
+    let day = date;
+    let lastClock = '';
+    const dated = (clock: string): string => {
+      if (lastClock && clock < lastClock) day = nextDay(day);
+      lastClock = clock;
+      return `${day}T${clock}:00`;
+    };
+    segments = flights.map((f, i) => {
+      const departure = dated(f.departureTime);
+      const arrival = dated(f.arrivalTime);
+      return {
+        origin: i === 0 ? origin : routeCodes[i]!,
+        destination: i === flights.length - 1 ? destination : routeCodes[i + 1]!,
+        departureDateTime: departure,
+        arrivalDateTime: arrival,
+        flightNumber: f.flightNumber,
+      };
+    });
   }
 
   const passengerNames = parseDeltaTravelers(body);

@@ -125,7 +125,7 @@ export class EmailTripImportService {
           break;
         case TripEventType.Booked:
           state.cancelled = false;
-          state.trip = event.trip ?? state.trip;
+          state.trip = mergeBookedTravelers(state.trip, event.trip);
           state.bookedAt = event.occurredAt;
           break;
         case TripEventType.Changed:
@@ -182,6 +182,29 @@ export class EmailTripImportService {
       confirmations: byConfirmation.size,
     };
   }
+}
+
+/**
+ * A newer booking normally replaces the prior trip. Some airlines (Delta) send
+ * one receipt per traveler under the same PNR, so when the new booking is the
+ * same itinerary, keep the travelers already seen instead of dropping them.
+ */
+function mergeBookedTravelers(
+  prev: RetrievedTrip | undefined,
+  next: RetrievedTrip | undefined,
+): RetrievedTrip | undefined {
+  if (!next) return prev;
+  if (!prev) return next;
+  const sameItinerary =
+    prev.origin === next.origin &&
+    prev.destination === next.destination &&
+    prev.departureDateTime === next.departureDateTime;
+  if (!sameItinerary) return next;
+  const names = [...prev.passengerNames];
+  for (const name of next.passengerNames) {
+    if (!names.some((n) => n.toLowerCase() === name.toLowerCase())) names.push(name);
+  }
+  return { ...next, passengerNames: names };
 }
 
 /** Merge a change over the prior trip, keeping prior values the change omits. */

@@ -8,6 +8,7 @@ import {
   parseDeltaEmail,
 } from './index.js';
 import type { EmailMessage } from './index.js';
+import { EmailTripImportService } from './EmailTripImportService.js';
 
 function msg(partial: Partial<EmailMessage>): EmailMessage {
   return {
@@ -124,4 +125,49 @@ test('parseDeltaEmail ignores marketing subjects', () => {
     parseDeltaEmail(msg({ subject: 'SkyMiles Weekly: deals just for you', body: AWARD_RECEIPT })),
     undefined,
   );
+});
+
+function transatlanticReceipt(name: string): string {
+  return `
+Confirmation Number
+ABC123
+AWARD RECEIPT
+Passenger Info
+Name: ${name}
+Sat, 20MARDEPARTARRIVE
+DELTA 4813*
+Delta Comfort Classic (S)
+INDIANAPOLIS
+04:32PM
+MPLS-ST PAUL
+05:23PM
+DELTA 10
+Delta Comfort Classic (S)
+MPLS-ST PAUL
+06:10PM
+LONDON-HEATHROW, GB
+07:05AM
+Fare Details: IND DL MSP DL X/LON DL
+Sat 20 Mar 2027IND-LHR
+Issue Date: 12NOV26
+Miles Redeemed 57,800 Miles
+Total Charged - &#36;5.60 USD
+`;
+}
+
+test('Delta per-traveler receipts for one PNR fold into one trip with every traveler', () => {
+  const svc = new EmailTripImportService();
+  const subject = 'Congrats On Your SkyMiles Award Trip';
+  const result = svc.fold([
+    msg({ id: 'a', subject, internalDate: 1763300000000, body: transatlanticReceipt('JANE Q DOE') }),
+    msg({ id: 'b', subject, internalDate: 1763300001000, body: transatlanticReceipt('JOHN DOE') }),
+  ]);
+  assert.equal(result.active.length, 1);
+  const trip = result.active[0]!;
+  assert.deepEqual(trip.passengerNames, ['Jane Q Doe', 'John Doe']);
+  assert.equal(trip.destination, 'LHR');
+  assert.equal(trip.cabin, Cabin.PremiumEconomy);
+  // The overnight second segment lands the next day at the real airport.
+  assert.equal(trip.segments?.[1]?.destination, 'LHR');
+  assert.equal(trip.segments?.[1]?.arrivalDateTime, '2027-03-21T07:05:00');
 });
