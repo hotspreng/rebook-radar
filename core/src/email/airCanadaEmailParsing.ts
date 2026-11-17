@@ -175,7 +175,7 @@ function parseSegments(body: string): ParsedSegment[] {
       // Vail Eagle EGE". Either way, a fresh code appearing once the CURRENT
       // segment is already complete (origin+destination+times) starts a new
       // connecting segment rather than being folded into the finished one.
-      const soloCode = line.match(/^([A-Z]{3})$/);
+      const soloCode = line.match(/^\(?([A-Z]{3})\)?$/);
       const comboCodes = soloCode ? [] : [...line.matchAll(/\b([A-Z]{3})\b/g)].map((m) => m[1]!);
       if (soloCode || comboCodes.length >= 2) {
         if (isSegmentComplete()) {

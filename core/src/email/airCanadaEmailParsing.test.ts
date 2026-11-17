@@ -297,3 +297,45 @@ test('parseAirCanadaEmail splits a single-day connection into two segments under
   assert.equal(trip.segments?.[1]?.departureDateTime, '2026-12-15T22:15:00');
   assert.equal(trip.segments?.[1]?.arrivalDateTime, '2026-12-15T23:29:00');
 });
+
+test('parseAirCanadaEmail reads airport codes printed in parentheses on their own lines', () => {
+  const body = `
+Booking Confirmation
+ZZ9ABC
+Flights
+Departure • Thu 21 Jan, 2027
+Economy - Standard Reward
+Sample City
+ (AAA)
+Other City
+ (BBB)
+13:05
+17:05
+Sample Airport
+Other Airport, Terminal 1
+UA594
+ • Operated by
+ United Airlines
+Duration: 3hr 00m
+Cabin: Economy (X)
+Passengers
+Jane Doe P0 PASSENGER_NAME_START Jane Doe PASSENGER_NAME_END
+Ticket #: 0142341008493
+Seats
+Purchase Summary
+15,000
+ pts
+Grand total
+15,000 pts + CAD $47.00
+`;
+  const event = parseAirCanadaEmail(
+    message({ subject: 'Air Canada - 21 Jan 2027: Sample City - Other City (Booking reference: ZZ9ABC)', body }),
+  );
+  const trip = event?.trip;
+  assert.ok(trip);
+  assert.equal(trip.origin, 'AAA');
+  assert.equal(trip.destination, 'BBB');
+  assert.equal(trip.departureDateTime, '2027-01-21T13:05:00');
+  assert.equal(trip.segments?.[0]?.flightNumber, 'UA 594');
+  assert.equal(trip.paidPoints, 15000);
+});
