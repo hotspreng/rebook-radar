@@ -171,3 +171,26 @@ test('Delta per-traveler receipts for one PNR fold into one trip with every trav
   assert.equal(trip.segments?.[1]?.destination, 'LHR');
   assert.equal(trip.segments?.[1]?.arrivalDateTime, '2027-03-21T07:05:00');
 });
+test('a Delta receipt forwarded by a relative is imported from the quoted original', () => {
+  const original = transatlanticReceipt('JANE Q DOE');
+  const forward = (from: string, body: string) =>
+    msg({
+      id: 'fwd',
+      subject: 'Fwd: Congrats On Your SkyMiles Award Trip',
+      from: 'Relative <relative@example.com>',
+      internalDate: Date.parse('2026-11-20T00:00:00Z'),
+      body: `FYI\n\n---------- Forwarded message ---------\nFrom: ${from}\nDate: Thu, Nov 12, 2026 at 9:00 AM\nSubject: Congrats On Your SkyMiles Award Trip\nTo: Relative <relative@example.com>\n\n${body}`,
+    });
+  const svc = new EmailTripImportService();
+
+  const plain = svc.fold([forward('Delta Air Lines <DeltaAirLines@t.delta.com>', original)]);
+  assert.equal(plain.active.length, 1);
+  assert.equal(plain.active[0]!.destination, 'LHR');
+  assert.deepEqual(plain.active[0]!.passengerNames, ['Jane Q Doe']);
+
+  const quoted = original.split('\n').map((l) => `> ${l}`).join('\n');
+  assert.equal(svc.fold([forward('Delta Air Lines <DeltaAirLines@t.delta.com>', quoted)]).active.length, 1);
+
+  // A forward whose original is not from an airline is not mistaken for a flight.
+  assert.equal(svc.fold([forward('Some Shop <orders@example.org>', original)]).active.length, 0);
+});

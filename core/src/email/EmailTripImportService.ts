@@ -6,6 +6,20 @@ import { isUnitedEmail, parseUnitedEmail, parseUnitedMileageCredit } from './uni
 import { isDeltaEmail, parseDeltaEmail } from './deltaEmailParsing.js';
 import { isAmericanEmail, parseAmericanEmail } from './americanEmailParsing.js';
 import { isAirCanadaEmail, parseAirCanadaEmail } from './airCanadaEmailParsing.js';
+import { unwrapForwarded } from './forwardedEmail.js';
+
+/**
+ * A confirmation a relative forwarded arrives from THEIR address with the
+ * airline's email quoted inside. Reveal the original so the sender picks the
+ * parser; a forward whose original isn't from a known airline is ignored.
+ */
+const AIRLINE_SENDER = /southwest|united\.com|delta\.com|aa\.com|aircanada/i;
+
+function revealOriginal(message: EmailMessage): EmailMessage | undefined {
+  const original = unwrapForwarded(message);
+  if (original === message) return message;
+  return AIRLINE_SENDER.test(original.from ?? '') ? original : undefined;
+}
 
 /**
  * Parse a single confirmation email into a trip event, dispatching to the
@@ -13,7 +27,9 @@ import { isAirCanadaEmail, parseAirCanadaEmail } from './airCanadaEmailParsing.j
  * `@united.com`, Delta from `@…delta.com`, American from `@…aa.com`;
  * everything else is treated as Southwest.
  */
-function parseAirlineEmail(message: EmailMessage): ParsedTripEvent | undefined {
+function parseAirlineEmail(raw: EmailMessage): ParsedTripEvent | undefined {
+  const message = revealOriginal(raw);
+  if (!message) return undefined;
   if (isAirCanadaEmail(message.from)) return parseAirCanadaEmail(message);
   if (isUnitedEmail(message.from)) return parseUnitedEmail(message);
   if (isDeltaEmail(message.from)) return parseDeltaEmail(message);
@@ -28,7 +44,9 @@ function parseAirlineEmail(message: EmailMessage): ParsedTripEvent | undefined {
  * by sender. Only United currently emits an attributable mileage credit; other
  * carriers return `undefined`.
  */
-function parseAirlineCredit(message: EmailMessage): MileageCreditEvent | undefined {
+function parseAirlineCredit(raw: EmailMessage): MileageCreditEvent | undefined {
+  const message = revealOriginal(raw);
+  if (!message) return undefined;
   if (isUnitedEmail(message.from)) return parseUnitedMileageCredit(message);
   return undefined;
 }

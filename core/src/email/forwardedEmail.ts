@@ -37,11 +37,14 @@ function unwrapOnce(message: EmailMessage): EmailMessage | undefined {
   }
 
   if (!headers.from) return undefined;
+  const bodyLines = lines.slice(bodyStart);
+  // Some clients quote the whole original ("> text"); the parsers expect the bare text.
+  const quoted = bodyLines.filter((l) => l.trim()).every((l) => /^\s*>/.test(l));
   return {
     ...message,
     from: headers.from,
     subject: headers.subject ?? message.subject,
-    body: lines.slice(bodyStart).join('\n'),
+    body: (quoted ? bodyLines.map((l) => l.replace(/^\s*>[ \t]?/, '')) : bodyLines).join('\n'),
     // The original send time orders a forward correctly against later
     // cancellations of the same reservation.
     internalDate: parseForwardedDate(headers.date ?? headers.sent) ?? message.internalDate,

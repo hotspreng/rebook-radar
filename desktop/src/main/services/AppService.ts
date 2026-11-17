@@ -79,6 +79,12 @@ const log = logger.child('app-service');
  */
 const SERPAPI_SECRET_ACCOUNTS = ['serpapi', 'serpapi-2', 'serpapi-3'] as const;
 
+/** Forwarded airline confirmations: "Fwd:" plus the airline or a typical confirmation subject. */
+const FORWARDED_FLIGHT_QUERY =
+  'subject:(fwd OR fw) (southwest OR united OR delta OR "american airlines" OR "air canada" OR aircanada OR ' +
+  'eticket OR "booking confirmation" OR "flight confirmation" OR "air reservation" OR "you\'re going to" OR ' +
+  '"trip confirmation" OR "award trip" OR "award receipt" OR "itinerary and receipt") newer_than:13m';
+
 /**
  * Whether an email-parsed passenger name refers to the same person as a stored
  * passenger. Requires the surname (last token) to match, then treats the given
@@ -452,6 +458,7 @@ export class AppService {
     let delta: EmailMessage[];
     let american: EmailMessage[];
     let airCanada: EmailMessage[];
+    let forwarded: EmailMessage[];
     try {
       southwest = await this.fetchTransactional(
         source,
@@ -484,17 +491,22 @@ export class AppService {
         'from:(notification@notification.aircanada.ca OR confirmation@aircanada.ca) newer_than:13m',
         'from:aircanada.ca newer_than:13m',
       );
+      // Confirmations a relative forwarded come from THEIR address, so the
+      // sender queries above can't see them; the original is unwrapped by the
+      // fold. Matched by subject, since the airline's own subject survives "Fwd:".
+      forwarded = await source.fetchMessages({ query: FORWARDED_FLIGHT_QUERY, maxResults: 500 });
     } catch (err) {
       await this.clearGmailIfAuthExpired(err);
       throw err;
     }
-    const messages = [...southwest, ...united, ...delta, ...american, ...airCanada];
+    const messages = [...southwest, ...united, ...delta, ...american, ...airCanada, ...forwarded];
     log.info('Fetched transactional emails', {
       southwest: southwest.length,
       united: united.length,
       delta: delta.length,
       american: american.length,
       airCanada: airCanada.length,
+      forwarded: forwarded.length,
     });
 
     const folded = new EmailTripImportService().fold(messages, { now: new Date() });
